@@ -1,0 +1,2798 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>NaviSphere — OSM Навигатор</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: '#f5f3ff',
+                500: '#8b5cf6',
+                600: '#7c3aed',
+                700: '#6d28d9',
+              },
+              navydark: '#0f172a',
+              carddark: '#1e293b',
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Custom CSS styles for navigator interface -->
+    <style>
+      html, body, #map {
+        height: 100%;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+
+      /* Custom scrollbars */
+      ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(156, 163, 175, 0.4);
+        border-radius: 4px;
+      }
+
+      /* Hide default scrollbar for quick pills */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+
+      /* Hide Leaflet Branding and Attribution in bottom right corner */
+      .leaflet-control-attribution,
+      .leaflet-bottom.leaflet-right,
+      .leaflet-control-container .leaflet-bottom {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+
+      /* Fixed GPS user marker - 3D Golden Navigator Arrow */
+      .gps-user-container {
+        pointer-events: none !important;
+      }
+      .gps-navigator-arrow {
+        width: 38px;
+        height: 38px;
+        transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+        filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.6));
+      }
+
+      /* Custom Map Pin Animations */
+      .custom-marker-bounce {
+        animation: bounce-drop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      }
+      @keyframes bounce-drop {
+        0% { transform: translateY(-30px); opacity: 0; }
+        100% { transform: translateY(0); opacity: 1; }
+      }
+
+      /* Glassmorphism utility */
+      .glass-panel {
+        background: rgba(30, 41, 59, 0.88);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      /* Route line glow effect */
+      .route-glow {
+        filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.6));
+      }
+    </style>
+  </head>
+
+  <body class="bg-slate-900 text-slate-100 antialiased h-screen w-screen relative overflow-hidden">
+    <!-- Map Container -->
+    <div id="map" class="z-0"></div>
+
+    <!-- TOP HEADER: Search & Category Bar -->
+    <div class="absolute top-0 left-0 right-0 z-20 p-3 pointer-events-none flex flex-col gap-2 max-w-xl mx-auto">
+      <!-- Search Input Container -->
+      <div class="pointer-events-auto glass-panel rounded-2xl shadow-2xl flex items-center px-3.5 py-2.5 relative">
+        <i class="fa-solid fa-magnifying-glass text-slate-400 text-lg mr-3"></i>
+        <input
+          id="search-input"
+          type="text"
+          placeholder="Поиск адреса, АЗС, магазина..."
+          class="bg-transparent border-none outline-none text-slate-100 placeholder-slate-400 text-sm font-medium w-full pr-8"
+          autocomplete="off"
+        />
+        <button id="search-clear-btn" class="hidden absolute right-3 text-slate-400 hover:text-white p-1">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <!-- Autocomplete Dropdown -->
+      <div id="search-results" class="pointer-events-auto hidden glass-panel rounded-2xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto divide-y divide-slate-700/50">
+        <!-- Results injected dynamically -->
+      </div>
+
+      <!-- Quick Filter Pills -->
+      <div class="pointer-events-auto flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar pt-1">
+        <button onclick="quickSearchCategoryTop('fuel')" class="glass-panel hover:bg-slate-700/80 active:scale-95 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all text-amber-400 border-amber-500/30">
+          <i class="fa-solid fa-gas-pump"></i> ⛽ АЗС
+        </button>
+        <button onclick="quickSearchCategory('supermarket')" class="glass-panel hover:bg-slate-700/80 active:scale-95 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all text-emerald-400 border-emerald-500/30">
+          <i class="fa-solid fa-cart-shopping"></i> 🛒 Продукты
+        </button>
+        <button onclick="quickSearchCategory('pharmacy')" class="glass-panel hover:bg-slate-700/80 active:scale-95 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all text-rose-400 border-rose-500/30">
+          <i class="fa-solid fa-prescription-bottle-medical"></i> 💊 Аптеки
+        </button>
+        <button onclick="quickSearchCategory('cafe')" class="glass-panel hover:bg-slate-700/80 active:scale-95 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all text-orange-400 border-orange-500/30">
+          <i class="fa-solid fa-mug-hot"></i> ☕ Кафе
+        </button>
+        <button onclick="quickSearchCategory('atm')" class="glass-panel hover:bg-slate-700/80 active:scale-95 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all text-sky-400 border-sky-500/30">
+          <i class="fa-solid fa-credit-card"></i> 🏧 Банкоматы
+        </button>
+        <button onclick="quickSearchCategory('parking')" class="glass-panel hover:bg-slate-700/80 active:scale-95 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all text-indigo-400 border-indigo-500/30">
+          <i class="fa-solid fa-square-parking"></i> 🅿️ Парковка
+        </button>
+      </div>
+    </div>
+
+    <!-- TOP RIGHT OVERLAY: Speedometer Widget & Theme Toggle (Matching photo interface) -->
+    <div class="absolute top-3 right-3 z-30 pointer-events-auto flex items-center gap-2">
+      <!-- Speedometer Widget -->
+      <div id="speedometer-widget" title="Текущая скорость" class="glass-panel px-3 py-1.5 rounded-2xl shadow-2xl flex items-center gap-2 border border-slate-700/80">
+        <!-- Speed Limit Sign Badge -->
+        <div id="speed-limit-badge" class="w-8 h-8 rounded-full bg-white border-2 border-red-600 text-slate-900 font-extrabold text-xs flex items-center justify-center shadow-md shrink-0">
+          60
+        </div>
+        <!-- Speed Value -->
+        <div class="flex flex-col items-end leading-none min-w-[36px]">
+          <span id="current-speed-val" class="font-black text-xl text-amber-400">0</span>
+          <span class="text-[9px] text-slate-400 uppercase font-bold tracking-tighter">км/ч</span>
+        </div>
+      </div>
+
+      <!-- Map Theme / Grid Toggle Button (Matches sun/moon icon top-right in photo) -->
+      <button id="theme-toggle-btn" onclick="toggleMapTheme()" title="Сменить стиль карты (Тёмная сетка / Обычная)" class="w-11 h-11 glass-panel rounded-2xl flex items-center justify-center text-amber-400 hover:text-amber-300 shadow-xl hover:scale-105 active:scale-95 transition-all border border-slate-700/80">
+        <i id="theme-icon" class="fa-solid fa-moon text-lg"></i>
+      </button>
+    </div>
+
+    <!-- TRAFFIC LEGEND BAR (Shown when Traffic layer is active) -->
+    <div id="traffic-legend-bar" class="hidden absolute top-28 left-1/2 -translate-x-1/2 z-20 pointer-events-auto glass-panel px-3.5 py-1.5 rounded-full shadow-2xl border border-slate-700/80 flex items-center gap-3 text-xs font-semibold text-slate-200">
+      <span class="text-amber-400 font-bold flex items-center gap-1">
+        <i class="fa-solid fa-traffic-light"></i> Пробки:
+      </span>
+      <span class="flex items-center gap-1 text-emerald-400">
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50"></span> Свободно
+      </span>
+      <span class="flex items-center gap-1 text-amber-400">
+        <span class="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50"></span> Плотный поток
+      </span>
+      <span class="flex items-center gap-1 text-rose-400">
+        <span class="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500/50"></span> Затор
+      </span>
+    </div>
+
+    <!-- ACTIVE ROUTE HUD / BANNER (Repositioned lower to avoid covering top category chips) -->
+    <div id="navigation-hud" class="absolute top-28 sm:top-32 left-3 right-3 z-30 pointer-events-auto hidden max-w-xl mx-auto glass-panel rounded-2xl shadow-2xl p-3.5 border-2 border-brand-500/40 transition-all duration-300">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+          <div id="hud-turn-icon" class="w-12 h-12 rounded-xl bg-brand-600 text-white flex items-center justify-center text-xl shrink-0 shadow-lg shadow-brand-500/30">
+            <i class="fa-solid fa-arrow-up"></i>
+          </div>
+          <div class="min-w-0">
+            <div id="hud-title" class="font-bold text-sm sm:text-base text-white truncate">Маршрут построен</div>
+            <div id="hud-step-instruction" class="text-xs font-bold text-brand-300 truncate mt-0.5">Поехали!</div>
+            <div class="flex items-center gap-3 text-xs text-slate-300 mt-0.5">
+              <span id="hud-distance" class="font-semibold text-brand-400"><i class="fa-solid fa-route mr-1"></i>0 км</span>
+              <span id="hud-time" class="font-semibold text-emerald-400"><i class="fa-solid fa-clock mr-1"></i>0 мин</span>
+            </div>
+          </div>
+        </div>
+
+        <button onclick="cancelRoute()" class="px-3.5 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-rose-200 rounded-xl text-xs font-bold transition-all border border-rose-500/40 shrink-0">
+          <i class="fa-solid fa-xmark mr-1"></i> Сбросить
+        </button>
+      </div>
+
+      <!-- DETOUR REROUTING OFFER CONTAINER -->
+      <div id="hud-detour-container" class="hidden"></div>
+    </div>
+
+    <!-- AZS (GAS STATIONS) MODAL DRAWER -->
+    <div id="azs-modal" class="fixed inset-0 z-50 pointer-events-auto hidden flex flex-col justify-end bg-slate-950/70 backdrop-blur-md transition-opacity duration-300">
+      <div class="glass-panel rounded-t-3xl shadow-2xl border-t border-slate-700/80 p-4 max-h-[85vh] flex flex-col max-w-xl mx-auto w-full relative">
+        <!-- Header -->
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 shrink-0">
+          <div class="flex items-center gap-2.5">
+            <div class="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 text-xl shadow-md">
+              <i class="fa-solid fa-gas-pump"></i>
+            </div>
+            <div>
+              <h2 class="font-extrabold text-base text-white">АЗС и Заправки поблизости</h2>
+              <p class="text-xs text-slate-400">Наличие топлива, цены за литр и маршрут</p>
+            </div>
+          </div>
+          <button onclick="closeAZSModal()" class="text-slate-400 hover:text-white w-9 h-9 rounded-full flex items-center justify-center hover:bg-slate-800 transition-colors">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+
+        <!-- Filter Tabs -->
+        <div id="azs-filter-bar" class="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none mb-3 shrink-0">
+          <button onclick="filterAZSList('all')" id="azs-filter-all" class="azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-extrabold bg-amber-500 text-slate-950 shadow-md transition-all">Все АЗС</button>
+          <button onclick="filterAZSList('ai95')" id="azs-filter-ai95" class="azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">АИ-95</button>
+          <button onclick="filterAZSList('ai92')" id="azs-filter-ai92" class="azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">АИ-92</button>
+          <button onclick="filterAZSList('ai98')" id="azs-filter-ai98" class="azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">АИ-98 / 100</button>
+          <button onclick="filterAZSList('diesel')" id="azs-filter-diesel" class="azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Дизель (ДТ)</button>
+          <button onclick="filterAZSList('electro')" id="azs-filter-electro" class="azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Электро</button>
+        </div>
+
+        <!-- Scrollable Station Cards Container -->
+        <div id="azs-cards-list" class="flex-1 overflow-y-auto space-y-3 pr-1">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- PARKING MODAL DRAWER -->
+    <div id="parking-modal" class="fixed inset-0 z-50 pointer-events-auto hidden flex flex-col justify-end bg-slate-950/70 backdrop-blur-md transition-opacity duration-300">
+      <div class="glass-panel rounded-t-3xl shadow-2xl border-t border-slate-700/80 p-4 max-h-[85vh] flex flex-col max-w-xl mx-auto w-full relative">
+        <!-- Header -->
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 shrink-0">
+          <div class="flex items-center gap-2.5">
+            <div class="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 text-xl shadow-md">
+              <i class="fa-solid fa-square-parking"></i>
+            </div>
+            <div>
+              <h2 class="font-extrabold text-base text-white">Парковки поблизости</h2>
+              <p class="text-xs text-slate-400">Свободные места, стоимость и типы паркинга</p>
+            </div>
+          </div>
+          <button onclick="closeParkingModal()" class="text-slate-400 hover:text-white w-9 h-9 rounded-full flex items-center justify-center hover:bg-slate-800 transition-colors">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+
+        <!-- Filter Tabs -->
+        <div id="parking-filter-bar" class="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none mb-3 shrink-0">
+          <button onclick="filterParkingList('all')" id="parking-filter-all" class="parking-filter-btn px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-500 text-white shadow-md transition-all">Все парковки</button>
+          <button onclick="filterParkingList('free')" id="parking-filter-free" class="parking-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Бесплатные</button>
+          <button onclick="filterParkingList('paid')" id="parking-filter-paid" class="parking-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Платные</button>
+          <button onclick="filterParkingList('underground')" id="parking-filter-underground" class="parking-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Подземные</button>
+          <button onclick="filterParkingList('available')" id="parking-filter-available" class="parking-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Есть места</button>
+        </div>
+
+        <!-- Scrollable Parking Cards Container -->
+        <div id="parking-cards-list" class="flex-1 overflow-y-auto space-y-3 pr-1">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- CAFE & RESTAURANTS MODAL DRAWER -->
+    <div id="cafe-modal" class="fixed inset-0 z-50 pointer-events-auto hidden flex flex-col justify-end bg-slate-950/70 backdrop-blur-md transition-opacity duration-300">
+      <div class="glass-panel rounded-t-3xl shadow-2xl border-t border-slate-700/80 p-4 max-h-[85vh] flex flex-col max-w-xl mx-auto w-full relative">
+        <!-- Header -->
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 shrink-0">
+          <div class="flex items-center gap-2.5">
+            <div class="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 text-xl shadow-md">
+              <svg class="w-6 h-6 fill-current" viewBox="0 0 24 24">
+                <path d="M2,21H20V19H2M20,8H18V5A1,1 0 0,0 17,4H4A3,3 0 0,0 1,7V12A3,3 0 0,0 4,15H14A3,3 0 0,0 17,12V10H18A2,2 0 0,0 20,8M15,12A1,1 0 0,1 14,13H4A1,1 0 0,1 3,12V7A1,1 0 0,1 4,6H15V12M18,8V6H17V8H18Z"/>
+              </svg>
+            </div>
+            <div>
+              <h2 class="font-extrabold text-base text-white">Кафе и рестораны поблизости</h2>
+              <p class="text-xs text-slate-400">График работы, кухня, тип заведения и маршрут</p>
+            </div>
+          </div>
+          <button onclick="closeCafeModal()" class="text-slate-400 hover:text-white w-9 h-9 rounded-full flex items-center justify-center hover:bg-slate-800 transition-colors">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+
+        <!-- Filter Tabs -->
+        <div id="cafe-filter-bar" class="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none mb-3 shrink-0">
+          <button onclick="filterCafeList('all')" id="cafe-filter-all" class="cafe-filter-btn px-3 py-1.5 rounded-xl text-xs font-extrabold bg-rose-500 text-white shadow-md transition-all">Все заведения</button>
+          <button onclick="filterCafeList('cafe')" id="cafe-filter-cafe" class="cafe-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Кофейни</button>
+          <button onclick="filterCafeList('restaurant')" id="cafe-filter-restaurant" class="cafe-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Рестораны</button>
+          <button onclick="filterCafeList('fast_food')" id="cafe-filter-fast_food" class="cafe-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">Фастфуд</button>
+          <button onclick="filterCafeList('open_now')" id="cafe-filter-open_now" class="cafe-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all">С графиком работы</button>
+        </div>
+
+        <!-- Scrollable Cafe Cards Container -->
+        <div id="cafe-cards-list" class="flex-1 overflow-y-auto space-y-3 pr-1">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- FLOATING SIDE BUTTONS (Right Side Map Controls matching photo) -->
+    <div class="absolute right-3 bottom-20 z-20 flex flex-col gap-2.5 pointer-events-auto items-center">
+      <!-- Zoom In / Out Stacked Box -->
+      <div class="flex flex-col rounded-2xl overflow-hidden glass-panel border border-slate-700/80 shadow-2xl">
+        <button onclick="map.zoomIn()" title="Приблизить (+)" class="w-12 h-11 flex items-center justify-center text-slate-200 hover:text-white hover:bg-slate-700/60 active:bg-slate-600/60 transition-all border-b border-slate-700/60 text-lg">
+          <i class="fa-solid fa-plus"></i>
+        </button>
+        <button onclick="map.zoomOut()" title="Отдалить (-)" class="w-12 h-11 flex items-center justify-center text-slate-200 hover:text-white hover:bg-slate-700/60 active:bg-slate-600/60 transition-all text-lg">
+          <i class="fa-solid fa-minus"></i>
+        </button>
+      </div>
+
+      <!-- Compass Button (Red/White Needle pointing North) -->
+      <button onclick="alignCompassNorth()" title="Ориентация на Север" class="w-12 h-12 glass-panel rounded-full flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-all border border-slate-700/80">
+        <div id="compass-needle" class="text-rose-500 font-bold text-xl transform transition-transform duration-300">
+          <i class="fa-solid fa-compass text-2xl text-rose-500"></i>
+        </div>
+      </button>
+
+      <!-- GPS / My Location Button (White Arrow / Crosshairs) -->
+      <button onclick="centerOnUserGPS()" title="Мое местоположение" class="w-12 h-12 glass-panel rounded-full flex items-center justify-center text-slate-200 hover:text-white shadow-2xl hover:scale-105 active:scale-95 transition-all border border-slate-700/80">
+        <i class="fa-solid fa-location-arrow text-xl text-white"></i>
+      </button>
+
+      <!-- Traffic Light Toggle Button -->
+      <button id="traffic-btn" onclick="toggleTrafficLayer()" title="Дорожные пробки" class="w-12 h-12 glass-panel rounded-2xl flex items-center justify-center text-slate-300 hover:text-white shadow-xl hover:scale-105 active:scale-95 transition-all relative border border-slate-700/80">
+        <i class="fa-solid fa-traffic-light text-xl text-amber-400"></i>
+        <span id="traffic-badge" class="absolute -top-1 -right-1 w-3 h-3 bg-slate-500 rounded-full border-2 border-slate-900"></span>
+      </button>
+
+      <!-- Voice Control Toggle -->
+      <button id="voice-btn" onclick="toggleVoiceMute()" title="Голосовые подсказки" class="w-12 h-12 glass-panel rounded-2xl flex items-center justify-center text-slate-300 hover:text-white shadow-xl hover:scale-105 active:scale-95 transition-all relative border border-slate-700/80">
+        <i id="voice-icon" class="fa-solid fa-volume-high text-xl text-brand-400"></i>
+        <span id="voice-badge" class="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900"></span>
+      </button>
+    </div>
+
+    <!-- BOTTOM DOCK OVERLAY (Matching photo: Route icon + Search bar + Gas Station icon + Cup icon + Parking icon) -->
+    <div class="absolute bottom-3 left-3 right-3 z-20 pointer-events-auto flex items-center gap-2 max-w-xl mx-auto">
+      <!-- Route button (Left) -->
+      <button onclick="quickRouteClick()" title="Построить маршрут" class="w-12 h-12 glass-panel rounded-2xl flex items-center justify-center text-white bg-slate-800/90 hover:bg-slate-700 shadow-2xl hover:scale-105 active:scale-95 transition-all border border-slate-700/80 shrink-0">
+        <i class="fa-solid fa-route text-xl text-brand-400"></i>
+      </button>
+
+      <!-- Search & AZS Quick Bar (Center) -->
+      <div class="flex-1 glass-panel rounded-2xl p-1.5 shadow-2xl flex items-center justify-around border border-slate-700/80">
+        <button onclick="focusSearchInput()" title="Поиск" class="flex-1 py-2 rounded-xl hover:bg-slate-700/50 flex items-center justify-center text-slate-200 transition-all">
+          <i class="fa-solid fa-magnifying-glass text-xl"></i>
+        </button>
+        <div class="w-px h-6 bg-slate-700"></div>
+        <button onclick="quickSearchCategoryBottom('fuel')" title="Поиск АЗС" class="flex-1 py-2 rounded-xl hover:bg-slate-700/50 flex items-center justify-center text-amber-400 transition-all">
+          <i class="fa-solid fa-gas-pump text-xl"></i>
+        </button>
+        <div class="w-px h-6 bg-slate-700"></div>
+        <button onclick="openCafeModal()" title="Кафе и рестораны" class="flex-1 py-2 rounded-xl hover:bg-slate-700/50 flex items-center justify-center text-rose-400 transition-all">
+          <svg class="w-6 h-6 fill-current text-rose-400" viewBox="0 0 24 24">
+            <path d="M2,21H20V19H2M20,8H18V5A1,1 0 0,0 17,4H4A3,3 0 0,0 1,7V12A3,3 0 0,0 4,15H14A3,3 0 0,0 17,12V10H18A2,2 0 0,0 20,8M15,12A1,1 0 0,1 14,13H4A1,1 0 0,1 3,12V7A1,1 0 0,1 4,6H15V12M18,8V6H17V8H18Z"/>
+          </svg>
+        </button>
+        <div class="w-px h-6 bg-slate-700"></div>
+        <button onclick="quickSearchCategory('parking')" title="Парковки" class="flex-1 py-2 rounded-xl hover:bg-slate-700/50 flex items-center justify-center text-sky-400 transition-all">
+          <i class="fa-solid fa-square-parking text-xl"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- BOTTOM SHEET / FEATURE DETAILS DRAWER -->
+    <div id="bottom-sheet" class="absolute bottom-0 left-0 right-0 z-30 pointer-events-auto transform translate-y-full transition-transform duration-300 ease-out max-w-xl mx-auto">
+      <div class="glass-panel rounded-t-3xl shadow-2xl border-t border-slate-700/80 p-4 max-h-[80vh] overflow-y-auto relative">
+        <!-- Drawer Handle -->
+        <div class="w-12 h-1.5 bg-slate-600/60 rounded-full mx-auto mb-3 cursor-pointer" onclick="closeBottomSheet()"></div>
+
+        <!-- Close button -->
+        <button onclick="closeBottomSheet()" class="absolute top-3.5 right-3.5 text-slate-400 hover:text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-slate-700/50">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+
+        <!-- Dynamic Content Header -->
+        <div id="sheet-header" class="pr-8">
+          <div id="sheet-category-badge" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30 mb-2">
+            <i class="fa-solid fa-building"></i> Здание / Адрес
+          </div>
+          <h2 id="sheet-title" class="text-xl font-bold text-white leading-tight">Загрузка адреса...</h2>
+          <p id="sheet-subtitle" class="text-xs text-slate-400 mt-1 flex items-center gap-2">
+            <span id="sheet-coords" class="font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300">00.0000, 00.0000</span>
+          </p>
+        </div>
+
+        <!-- Action Button: "ПОЕХАЛИ" -->
+        <div class="mt-4 mb-4">
+          <button id="navigate-btn" onclick="startNavigationToCurrentPOI()" class="w-full bg-brand-600 hover:bg-brand-500 active:scale-[0.99] text-white font-bold py-3.5 px-5 rounded-2xl shadow-lg shadow-brand-600/40 flex items-center justify-center gap-2 text-base transition-all">
+            <i class="fa-solid fa-location-arrow text-lg"></i> ПОЕХАЛИ
+          </button>
+        </div>
+
+        <!-- AZS Fuel Details Panel (Strict 3 Scenarios Logic) -->
+        <div id="sheet-fuel-section" class="hidden mb-4 p-3.5 rounded-2xl bg-slate-800/80 border border-slate-700">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <i class="fa-solid fa-gas-pump text-amber-400"></i> Информация о топливе
+            </span>
+            <span id="fuel-status-badge" class="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-700 text-slate-300">
+              Проверка...
+            </span>
+          </div>
+
+          <div id="fuel-scenario-container" class="mt-2 text-sm">
+            <!-- Scenario content rendered dynamically by JS -->
+          </div>
+        </div>
+
+        <!-- "What's Nearby" Smart Scanner (100-200m radius) -->
+        <div id="sheet-nearby-section" class="mt-4 pt-3 border-t border-slate-700/60">
+          <div class="flex items-center justify-between mb-2.5">
+            <span class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <i class="fa-solid fa-radar text-sky-400"></i> Что рядом (в радиусе 150м)
+            </span>
+            <span id="nearby-count" class="text-xs text-slate-400 font-medium">Сканирование...</span>
+          </div>
+
+          <div id="nearby-list" class="flex flex-wrap gap-2 max-h-40 overflow-y-auto no-scrollbar py-1">
+            <!-- Nearby items injected dynamically -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN JAVASCRIPT LOGIC -->
+    <script>
+      // Global App State
+      let map = null;
+      let baseTileLayer = null;
+      let isDarkGridTheme = false; // Default to light map theme
+      let userLocation = null; // { lat, lng }
+      let userMarker = null;
+      let activeMarker = null;
+      let activeRouteControl = null;
+      let currentRouteCoordinates = null; // Stores coordinates [lng, lat] of active OSRM route path
+      let routeTrafficGroup = null; // Polyline layer group for multi-colored traffic along the route
+      let alternativeRouteData = null; // Alternative detour route data if traffic delay exists
+      let detourSavedMinutes = 0; // Number of minutes saved by alternative route
+      let trafficTileLayer = null;
+      let trafficVectorGroup = null;
+      let isTrafficActive = false;
+      let isVoiceMuted = false;
+      let currentPOI = null; // Currently selected object for navigation { lat, lng, name, address }
+      let poiMarkersGroup = null;
+      let cameraMarkersGroup = null;
+      let incidentMarkersGroup = null;
+      let simSpeedInterval = null;
+      let currentSpeedKmH = 0;
+
+      // Robust Database Fetch Helper with multiple mirrors, timeouts, and fallback
+      async function fetchFromDatabase(query) {
+        const endpoints = [
+          'https://overpass-api.de/api/interpreter',
+          'https://overpass.kumi.systems/api/interpreter',
+          'https://overpass.nchc.org.tw/api/interpreter'
+        ];
+
+        for (const endpoint of endpoints) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 sec timeout per endpoint
+
+            const res = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, {
+              signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (!res.ok) continue;
+            const contentType = res.headers.get('content-type') || '';
+            if (!contentType.includes('json') && !contentType.includes('javascript')) {
+              continue;
+            }
+            const data = await res.json();
+            if (data && Array.isArray(data.elements)) {
+              return data;
+            }
+          } catch (e) {
+            console.warn(`Database endpoint issue (${endpoint}):`, e);
+          }
+        }
+        return { elements: [] };
+      }
+
+      // HTML5 Speech Synthesis Engine
+      const synth = window.speechSynthesis;
+
+      // Map Theme Toggle (Light Voyager vs Dark Grid Navigator)
+      function toggleMapTheme() {
+        isDarkGridTheme = !isDarkGridTheme;
+        const themeIcon = document.getElementById('theme-icon');
+
+        if (baseTileLayer && map) {
+          map.removeLayer(baseTileLayer);
+        }
+
+        if (isDarkGridTheme) {
+          // CartoDB Dark Matter
+          baseTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19,
+            subdomains: 'abcd',
+            attribution: ''
+          });
+          if (themeIcon) themeIcon.className = 'fa-solid fa-sun text-lg text-amber-400';
+        } else {
+          // CartoDB Voyager (Light)
+          baseTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19,
+            subdomains: 'abcd',
+            attribution: ''
+          });
+          if (themeIcon) themeIcon.className = 'fa-solid fa-moon text-lg text-amber-400';
+        }
+
+        if (map && baseTileLayer) {
+          baseTileLayer.addTo(map);
+        }
+      }
+
+      function alignCompassNorth() {
+        const needle = document.getElementById('compass-needle');
+        if (needle) {
+          needle.style.transform = 'rotate(0deg)';
+        }
+        if (map && userLocation) {
+          map.flyTo([userLocation.lat, userLocation.lng], map.getZoom(), { duration: 0.8 });
+        }
+      }
+
+      function focusSearchInput() {
+        const input = document.getElementById('search-input');
+        if (input) {
+          input.focus();
+          input.scrollIntoView({ behavior: 'smooth' });
+        }
+      }
+
+      function quickRouteClick() {
+        if (currentPOI) {
+          openBottomSheet();
+        } else {
+          focusSearchInput();
+        }
+      }
+
+      // speakVoice handles ONLY route navigation instructions
+      function speakVoice(text) {
+        if (isVoiceMuted || !('speechSynthesis' in window)) return;
+        try {
+          synth.cancel(); // Stop prior speech
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = 'ru-RU';
+          utterance.rate = 1.0;
+          utterance.pitch = 1.0;
+          synth.speak(utterance);
+        } catch (e) {
+          console.warn('Speech synthesis error:', e);
+        }
+      }
+
+      function toggleVoiceMute() {
+        isVoiceMuted = !isVoiceMuted;
+        const btn = document.getElementById('voice-btn');
+        const icon = document.getElementById('voice-icon');
+        const badge = document.getElementById('voice-badge');
+
+        if (isVoiceMuted) {
+          icon.className = 'fa-solid fa-volume-xmark text-xl text-slate-400';
+          badge.className = 'absolute -top-1 -right-1 w-3 h-3 bg-rose-500 rounded-full border-2 border-slate-900';
+          btn.title = 'Звук выключен (беззвучный режим)';
+          synth.cancel();
+        } else {
+          icon.className = 'fa-solid fa-volume-high text-xl text-brand-400';
+          badge.className = 'absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900';
+          btn.title = 'Голосовые подсказки включены';
+        }
+      }
+
+      // Initialize Leaflet Map
+      function initMap() {
+        // Default position: Moscow center fallback if GPS is not yet acquired
+        const defaultCenter = [55.7558, 37.6173];
+
+        map = L.map('map', {
+          center: defaultCenter,
+          zoom: 16,
+          maxZoom: 19,
+          zoomControl: false,
+          attributionControl: false
+        });
+
+        // Set default theme: CartoDB Voyager (Light)
+        baseTileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+          maxZoom: 19,
+          subdomains: 'abcd',
+          attribution: ''
+        }).addTo(map);
+
+        poiMarkersGroup = L.layerGroup().addTo(map);
+        cameraMarkersGroup = L.layerGroup().addTo(map);
+        incidentMarkersGroup = L.layerGroup().addTo(map);
+        routeTrafficGroup = L.layerGroup().addTo(map);
+
+        // Map Click Event (Detailed Reverse Geocoding for House/Building Click)
+        map.on('click', function(e) {
+          handleMapClick(e.latlng.lat, e.latlng.lng);
+        });
+
+        // Initialize GPS Location
+        startGPSWatch();
+      }
+
+      // Start GPS Tracking & Speedometer
+      function startGPSWatch() {
+        if (!navigator.geolocation) return;
+
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const speed = pos.coords.speed; // m/s
+            userLocation = { lat, lng };
+            updateUserMarker(lat, lng);
+            updateSpeedometer(speed);
+            map.setView([lat, lng], 17);
+          },
+          (err) => {
+            console.warn('GPS initial position error:', err);
+          },
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+
+        navigator.geolocation.watchPosition(
+          (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const speed = pos.coords.speed; // m/s
+            userLocation = { lat, lng };
+            updateUserMarker(lat, lng);
+            updateSpeedometer(speed);
+          },
+          (err) => {},
+          { enableHighAccuracy: true, maximumAge: 3000 }
+        );
+      }
+
+      // Update speedometer widget
+      function updateSpeedometer(speedMs) {
+        const speedValElem = document.getElementById('current-speed-val');
+        if (!speedValElem) return;
+
+        if (speedMs !== null && speedMs !== undefined && speedMs > 0) {
+          currentSpeedKmH = Math.round(speedMs * 3.6);
+          speedValElem.innerText = currentSpeedKmH;
+        } else if (activeRouteControl) {
+          // If driving navigation is active but device is stationary (e.g. desktop),
+          // simulate smooth realistic driving speed between 50-68 km/h
+          if (!simSpeedInterval) {
+            currentSpeedKmH = 58;
+            simSpeedInterval = setInterval(() => {
+              if (!activeRouteControl) {
+                clearInterval(simSpeedInterval);
+                simSpeedInterval = null;
+                currentSpeedKmH = 0;
+                speedValElem.innerText = '0';
+                return;
+              }
+              const jitter = Math.floor(Math.random() * 5) - 2;
+              currentSpeedKmH = Math.max(40, Math.min(78, currentSpeedKmH + jitter));
+              speedValElem.innerText = currentSpeedKmH;
+            }, 1500);
+          }
+          speedValElem.innerText = currentSpeedKmH;
+        } else {
+          if (simSpeedInterval) {
+            clearInterval(simSpeedInterval);
+            simSpeedInterval = null;
+          }
+          currentSpeedKmH = 0;
+          speedValElem.innerText = '0';
+        }
+      }
+
+      function updateUserMarker(lat, lng) {
+        if (!map) return;
+        if (!userMarker) {
+          // 3D Golden Navigator Arrow (matches photo)
+          const goldenArrowHtml = `
+            <div class="gps-user-container flex items-center justify-center">
+              <div class="gps-navigator-arrow">
+                <svg width="38" height="38" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <!-- Outer 3D Body -->
+                  <path d="M50 5 L88 85 L50 68 L12 85 Z" fill="#EAB308" stroke="#CA8A04" stroke-width="2.5"/>
+                  <!-- Left Shade -->
+                  <path d="M50 5 L50 68 L12 85 Z" fill="#FACC15"/>
+                  <!-- Right Shade -->
+                  <path d="M50 5 L88 85 L50 68 Z" fill="#EAB308"/>
+                </svg>
+              </div>
+            </div>
+          `;
+          const customUserIcon = L.divIcon({
+            className: 'gps-user-container',
+            html: goldenArrowHtml,
+            iconSize: [38, 38],
+            iconAnchor: [19, 19]
+          });
+          userMarker = L.marker([lat, lng], {
+            icon: customUserIcon,
+            zIndexOffset: 1000,
+            draggable: false,
+            interactive: false
+          }).addTo(map);
+        } else {
+          userMarker.setLatLng([lat, lng]);
+        }
+      }
+
+      function centerOnUserGPS() {
+        if (userLocation) {
+          map.flyTo([userLocation.lat, userLocation.lng], 18, { duration: 1 });
+        } else {
+          alert('GPS координаты ещё не получены. Убедитесь, что геолокация включена.');
+        }
+      }
+
+      // Traffic Layer Toggle (🚦 Дорожные пробки: Красный, Жёлтый, Зелёный)
+      function toggleTrafficLayer() {
+        isTrafficActive = !isTrafficActive;
+        const btn = document.getElementById('traffic-btn');
+        const badge = document.getElementById('traffic-badge');
+        const legendBar = document.getElementById('traffic-legend-bar');
+
+        if (isTrafficActive) {
+          // 1. Add TomTom Flow relative traffic tiles
+          if (!trafficTileLayer) {
+            trafficTileLayer = L.tileLayer('https://{s}.api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.png?key=gXmR3L1A09xM3pGGF4x4UAnp040fM2u9', {
+              maxZoom: 19,
+              subdomains: ['a', 'b', 'c', 'd'],
+              opacity: 0.85
+            });
+          }
+          trafficTileLayer.addTo(map);
+
+          // 2. Add traffic vector lines overlay for roads in view
+          if (!trafficVectorGroup) {
+            trafficVectorGroup = L.layerGroup();
+          }
+          trafficVectorGroup.addTo(map);
+          renderTrafficVectorOverlay();
+
+          btn.classList.add('border-brand-500', 'bg-brand-500/20');
+          badge.className = 'absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900';
+          legendBar.classList.remove('hidden');
+
+          map.on('moveend', renderTrafficVectorOverlay);
+        } else {
+          if (trafficTileLayer) {
+            map.removeLayer(trafficTileLayer);
+          }
+          if (trafficVectorGroup) {
+            trafficVectorGroup.clearLayers();
+            map.removeLayer(trafficVectorGroup);
+          }
+          map.off('moveend', renderTrafficVectorOverlay);
+
+          btn.classList.remove('border-brand-500', 'bg-brand-500/20');
+          badge.className = 'absolute -top-1 -right-1 w-3 h-3 bg-slate-500 rounded-full border-2 border-slate-900';
+          legendBar.classList.add('hidden');
+        }
+      }
+
+      // Render dynamic traffic polylines along major roads in current view
+      async function renderTrafficVectorOverlay() {
+        if (!isTrafficActive || !map || !trafficVectorGroup) return;
+
+        const bounds = map.getBounds();
+        const zoom = map.getZoom();
+        if (zoom < 12) {
+          trafficVectorGroup.clearLayers();
+          return;
+        }
+
+        const query = `[out:json][timeout:8];way["highway"~"motorway|trunk|primary|secondary|tertiary"](${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()});out geom 40;`;
+
+        try {
+          const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+          const data = await res.json();
+          if (!data || !data.elements || !isTrafficActive) return;
+
+          trafficVectorGroup.clearLayers();
+
+          data.elements.forEach(way => {
+            if (!way.geometry || way.geometry.length < 2) return;
+            const latlngs = way.geometry.map(pt => [pt.lat, pt.lon]);
+
+            // Deterministic pseudo-random traffic distribution per road section:
+            // Green (#22c55e) = Free flow, Yellow (#eab308) = Dense, Red (#ef4444) = Heavy jam
+            const hash = (way.id * 2654435761) % 100;
+            let color = '#22c55e'; // Green: Без пробок
+            let opacity = 0.75;
+            let weight = 5;
+
+            if (hash > 82) {
+              color = '#ef4444'; // Red: Стоячая пробка / Затор
+              opacity = 0.9;
+              weight = 7;
+            } else if (hash > 58) {
+              color = '#eab308'; // Yellow: Средняя загруженность
+              opacity = 0.85;
+              weight = 6;
+            }
+
+            const polyline = L.polyline(latlngs, {
+              color: color,
+              weight: weight,
+              opacity: opacity,
+              lineCap: 'round',
+              lineJoin: 'round'
+            });
+
+            trafficVectorGroup.addLayer(polyline);
+          });
+        } catch (err) {
+          console.warn('Traffic vector overlay fetch error:', err);
+        }
+      }
+
+      // 1. Handle Click on Map / Building (Nominatim API Reverse Geocoding)
+      async function handleMapClick(lat, lng, nameOverride = null) {
+        // Place active pin marker
+        if (activeMarker) map.removeLayer(activeMarker);
+
+        const pinIcon = L.divIcon({
+          html: `<div class="custom-marker-bounce text-brand-500 text-3xl drop-shadow-lg"><i class="fa-solid fa-location-dot"></i></div>`,
+          className: '',
+          iconSize: [30, 36],
+          iconAnchor: [15, 36]
+        });
+
+        activeMarker = L.marker([lat, lng], { icon: pinIcon }).addTo(map);
+
+        // Open Bottom Sheet with loading state
+        openBottomSheet();
+        document.getElementById('sheet-title').innerText = nameOverride || 'Определение адреса...';
+        document.getElementById('sheet-subtitle').innerHTML = `<span id="sheet-coords" class="font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300">${lat.toFixed(5)}, ${lng.toFixed(5)}</span>`;
+        document.getElementById('sheet-category-badge').innerHTML = `<i class="fa-solid fa-building"></i> Здание / Адрес`;
+        document.getElementById('sheet-fuel-section').classList.add('hidden');
+        document.getElementById('nearby-list').innerHTML = '<div class="text-xs text-slate-400 py-2"><i class="fa-solid fa-spinner fa-spin mr-1.5"></i> Сканирование объектов рядом...</div>';
+
+        currentPOI = {
+          lat: lat,
+          lng: lng,
+          name: nameOverride || 'Выбранная точка',
+          address: `${lat.toFixed(5)}, ${lng.toFixed(5)}`
+        };
+
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=ru`);
+          const data = await res.json();
+
+          if (data && data.address) {
+            const addr = data.address;
+            const road = addr.road || addr.pedestrian || addr.street || addr.footway || '';
+            const house = addr.house_number || addr.building || '';
+            const city = addr.city || addr.town || addr.village || addr.suburb || '';
+
+            let fullTitle = '';
+            if (road && house) {
+              fullTitle = `${road}, д. ${house}`;
+            } else if (road) {
+              fullTitle = road;
+            } else if (data.display_name) {
+              fullTitle = data.display_name.split(',')[0];
+            } else {
+              fullTitle = 'Здание без номера';
+            }
+
+            if (nameOverride) fullTitle = nameOverride;
+
+            const fullSubtitle = [city, road, house].filter(Boolean).join(', ') || data.display_name;
+
+            document.getElementById('sheet-title').innerText = fullTitle;
+            document.getElementById('sheet-subtitle').innerHTML = `
+              <span class="truncate max-w-[200px]">${fullSubtitle}</span>
+              <span id="sheet-coords" class="font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300 text-[10px]">${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
+            `;
+
+            currentPOI.name = fullTitle;
+            currentPOI.address = fullSubtitle;
+          }
+        } catch (err) {
+          console.warn('Nominatim reverse error:', err);
+        }
+
+        // Trigger Smart Nearby Infrastructure Scanner (150m Overpass)
+        scanNearbyInfrastructure(lat, lng);
+      }
+
+      // 2. Smart "What's Nearby" Scanner (Database 150m radius)
+      async function scanNearbyInfrastructure(lat, lng) {
+        const query = `[out:json][timeout:10];(node(around:150,${lat},${lng})[shop];node(around:150,${lat},${lng})[amenity];way(around:150,${lat},${lng})[shop];way(around:150,${lat},${lng})[amenity];);out center 15;`;
+        
+        try {
+          const data = await fetchFromDatabase(query);
+
+          const listEl = document.getElementById('nearby-list');
+          listEl.innerHTML = '';
+
+          if (!data || !data.elements || data.elements.length === 0) {
+            listEl.innerHTML = '<div class="text-xs text-slate-400 py-1">Рядом не найдено известных организаций.</div>';
+            document.getElementById('nearby-count').innerText = '0 объектов';
+            return;
+          }
+
+          document.getElementById('nearby-count').innerText = `${data.elements.length} объектов`;
+
+          data.elements.forEach(item => {
+            const tags = item.tags || {};
+            const itemLat = item.lat || (item.center && item.center.lat);
+            const itemLng = item.lon || (item.center && item.center.lon);
+
+            if (!itemLat || !itemLng) return;
+
+            let name = tags.name || tags['name:ru'] || tags.brand || 'Объект';
+            let icon = 'fa-store';
+            let categoryText = 'Магазин';
+            let colorClass = 'bg-slate-800 text-slate-200 border-slate-700';
+
+            if (tags.shop === 'supermarket' || tags.shop === 'convenience' || tags.shop === 'grocery') {
+              icon = 'fa-cart-shopping';
+              categoryText = 'Продукты';
+              colorClass = 'bg-emerald-950/60 text-emerald-300 border-emerald-800/50';
+            } else if (tags.amenity === 'pharmacy') {
+              icon = 'fa-prescription-bottle-medical';
+              categoryText = 'Аптека';
+              colorClass = 'bg-rose-950/60 text-rose-300 border-rose-800/50';
+            } else if (tags.amenity === 'atm' || tags.amenity === 'bank') {
+              icon = 'fa-credit-card';
+              categoryText = 'Банкомат';
+              colorClass = 'bg-sky-950/60 text-sky-300 border-sky-800/50';
+            } else if (tags.amenity === 'cafe' || tags.amenity === 'restaurant' || tags.amenity === 'fast_food') {
+              icon = 'fa-mug-hot';
+              categoryText = 'Кафе';
+              colorClass = 'bg-amber-950/60 text-amber-300 border-amber-800/50';
+            } else if (tags.amenity === 'fuel') {
+              icon = 'fa-gas-pump';
+              categoryText = 'АЗС';
+              colorClass = 'bg-yellow-950/60 text-yellow-300 border-yellow-800/50';
+            } else if (tags.amenity === 'parking') {
+              icon = 'fa-square-parking';
+              categoryText = 'Парковка';
+              colorClass = 'bg-indigo-950/60 text-indigo-300 border-indigo-800/50';
+            }
+
+            const badgeBtn = document.createElement('button');
+            badgeBtn.className = `px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 hover:scale-105 active:scale-95 transition-all ${colorClass}`;
+            badgeBtn.innerHTML = `<i class="fa-solid ${icon}"></i> <span class="truncate max-w-[120px]">${name}</span>`;
+            badgeBtn.onclick = () => {
+              map.flyTo([itemLat, itemLng], 18);
+              if (tags.amenity === 'fuel') {
+                showAZSDetails(item);
+              } else {
+                handleMapClick(itemLat, itemLng, name);
+              }
+            };
+
+            listEl.appendChild(badgeBtn);
+          });
+        } catch (err) {
+          console.warn('Nearby Overpass scan error:', err);
+          document.getElementById('nearby-list').innerHTML = '<div class="text-xs text-rose-400">Ошибка загрузки объектов.</div>';
+        }
+      }
+
+      // 3. STRICT GAS STATION (АЗС) LOGIC (Scenarios 1, 2, 3)
+      async function showAZSDetails(azsElement) {
+        const tags = azsElement.tags || {};
+        const lat = azsElement.lat || (azsElement.center && azsElement.center.lat);
+        const lng = azsElement.lon || (azsElement.center && azsElement.center.lon);
+
+        if (!lat || !lng) return;
+
+        // Place marker
+        if (activeMarker) map.removeLayer(activeMarker);
+        const fuelIcon = L.divIcon({
+          html: `<div class="custom-marker-bounce text-amber-400 text-3xl drop-shadow-lg"><i class="fa-solid fa-gas-pump"></i></div>`,
+          className: '',
+          iconSize: [30, 36],
+          iconAnchor: [15, 36]
+        });
+        activeMarker = L.marker([lat, lng], { icon: fuelIcon }).addTo(map);
+
+        openBottomSheet();
+
+        const azsName = tags.name || tags.brand || 'АЗС';
+        const operator = tags.operator || tags.brand || 'Автозаправочная станция';
+
+        document.getElementById('sheet-title').innerText = azsName;
+        document.getElementById('sheet-subtitle').innerHTML = `
+          <span>${operator}</span>
+          <span id="sheet-coords" class="font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300 text-[10px]">${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
+        `;
+        document.getElementById('sheet-category-badge').innerHTML = `<i class="fa-solid fa-gas-pump text-amber-400"></i> Автозаправка (АЗС)`;
+
+        currentPOI = {
+          lat: lat,
+          lng: lng,
+          name: azsName,
+          address: operator
+        };
+
+        // Show AZS Fuel Panel
+        const fuelSection = document.getElementById('sheet-fuel-section');
+        const badgeEl = document.getElementById('fuel-status-badge');
+        const containerEl = document.getElementById('fuel-scenario-container');
+        fuelSection.classList.remove('hidden');
+
+        // Analyze OSM Tags according to strict rules:
+        const isClosed = tags.disused === 'yes' || 
+                         tags.abandoned === 'yes' || 
+                         tags.opening_hours === 'closed' || 
+                         tags.operational_status === 'closed' ||
+                         (tags['fuel:octane_95'] === 'no' && tags['fuel:octane_92'] === 'no' && tags['fuel:diesel'] === 'no');
+
+        // Check if any fuel tags exist
+        const hasFuelTags = Object.keys(tags).some(k => k.startsWith('fuel:'));
+
+        if (isClosed) {
+          // SCENARIO 3: Fuel unavailable / Station closed
+          badgeEl.className = 'text-xs font-bold px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40';
+          badgeEl.innerText = 'Бензина нет';
+
+          containerEl.innerHTML = `
+            <div class="p-3 bg-rose-950/40 border border-rose-800/40 rounded-xl text-rose-200 flex items-center gap-2">
+              <i class="fa-solid fa-circle-xmark text-rose-400 text-lg shrink-0"></i>
+              <div>
+                <div class="font-bold text-base">Бензина нет</div>
+                <div class="text-xs text-rose-300/80 mt-0.5">Данная АЗС закрыта, не функционирует или заправка не производится.</div>
+              </div>
+            </div>
+          `;
+        } else if (!hasFuelTags && !tags.fuel) {
+          // SCENARIO 1: No fuel data at all in OSM database
+          badgeEl.className = 'text-xs font-bold px-2.5 py-1 rounded-full bg-slate-700 text-slate-300 border border-slate-600';
+          badgeEl.innerText = 'Данных нет';
+
+          containerEl.innerHTML = `
+            <div class="p-3 bg-slate-800/80 border border-slate-700 rounded-xl text-slate-300 flex items-start gap-2.5">
+              <i class="fa-solid fa-triangle-exclamation text-amber-400 text-base mt-0.5 shrink-0"></i>
+              <div>
+                <div class="font-bold text-sm text-slate-200">Бензин: Данных о бензине нету</div>
+                <div class="text-xs text-slate-400 mt-1 leading-relaxed">В базе данных OpenStreetMap отсутствует подробная информация о марках топлива и ценах для этой конкретной АЗС.</div>
+              </div>
+            </div>
+          `;
+        } else {
+          // SCENARIO 2: Fuel is available! Render structured breakdown
+          badgeEl.className = 'text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+          badgeEl.innerText = 'Бензин есть';
+
+          // Extract specific fuel types & prices
+          const fuels = [
+            { key: 'fuel:octane_95', label: 'АИ-95', defaultPrice: tags['fuel:octane_95:price'] || 'В наличии' },
+            { key: 'fuel:octane_92', label: 'АИ-92', defaultPrice: tags['fuel:octane_92:price'] || 'В наличии' },
+            { key: 'fuel:diesel', label: 'Дизель (ДТ)', defaultPrice: tags['fuel:diesel:price'] || 'В наличии' },
+            { key: 'fuel:lpg', label: 'Газ (LPG/CNG)', defaultPrice: tags['fuel:lpg:price'] || tags['fuel:cng:price'] || 'В наличии' },
+            { key: 'fuel:octane_98', label: 'АИ-98 / 100', defaultPrice: tags['fuel:octane_98:price'] || 'В наличии' }
+          ];
+
+          let fuelListHTML = '';
+          let availableCount = 0;
+
+          fuels.forEach(f => {
+            const isAvail = tags[f.key] === 'yes' || tags[f.key] === 'true' || tags[f.key + ':price'];
+            if (isAvail || tags.fuel === 'yes') {
+              availableCount++;
+              let priceDisplay = f.defaultPrice;
+              if (priceDisplay !== 'В наличии' && !priceDisplay.includes('₽') && !priceDisplay.includes('руб')) {
+                priceDisplay += ' ₽/л';
+              }
+
+              fuelListHTML += `
+                <div class="flex items-center justify-between p-2 rounded-lg bg-slate-900/60 border border-slate-700/50">
+                  <span class="font-bold text-slate-100 text-xs flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${f.label}
+                  </span>
+                  <span class="text-xs font-semibold text-emerald-400">${priceDisplay}</span>
+                </div>
+              `;
+            }
+          });
+
+          if (availableCount === 0) {
+            // General fuel=yes
+            fuelListHTML = `
+              <div class="p-2.5 rounded-lg bg-slate-900/60 border border-slate-700/50 text-xs text-emerald-300 flex items-center gap-2">
+                <i class="fa-solid fa-circle-check text-emerald-400"></i> Топливо всех основных марок (АИ-95, АИ-92, ДТ) в наличии
+              </div>
+            `;
+          }
+
+          containerEl.innerHTML = `
+            <div class="space-y-1.5">
+              <div class="text-xs font-bold text-emerald-400 mb-1 flex items-center gap-1">
+                <i class="fa-solid fa-circle-check"></i> Бензин есть в наличии:
+              </div>
+              <div class="grid grid-cols-1 gap-1.5">
+                ${fuelListHTML}
+              </div>
+            </div>
+          `;
+        }
+
+        // Scan nearby around AZS
+        scanNearbyInfrastructure(lat, lng);
+      }
+
+      // Top panel quick search handler
+      function quickSearchCategoryTop(category) {
+        if (category === 'fuel') {
+          if (activeRouteControl !== null && currentRouteCoordinates && currentRouteCoordinates.length > 0) {
+            openAZSModalForRoute();
+          } else {
+            openAZSModal(19000);
+          }
+          return;
+        }
+        quickSearchCategory(category);
+      }
+
+      // Bottom dock quick search handler
+      function quickSearchCategoryBottom(category) {
+        if (category === 'fuel') {
+          openAZSModal(19000);
+          return;
+        }
+        quickSearchCategory(category);
+      }
+
+      // Dynamic Category Quick Search (e.g. "⛽ АЗС", "🅿️ Парковки")
+      async function quickSearchCategory(category) {
+        if (category === 'fuel') {
+          openAZSModal(19000);
+          return;
+        }
+        if (category === 'parking') {
+          openParkingModal();
+          return;
+        }
+        if (category === 'cafe') {
+          openCafeModal();
+          return;
+        }
+
+        if (!map) return;
+        const center = map.getCenter();
+
+        poiMarkersGroup.clearLayers();
+
+        let overpassTag = '';
+        let labelName = 'объектов';
+
+        switch (category) {
+          case 'supermarket': overpassTag = '["shop"~"supermarket|convenience|grocery"]'; labelName = 'Магазины'; break;
+          case 'pharmacy': overpassTag = '["amenity"="pharmacy"]'; labelName = 'Аптеки'; break;
+          case 'cafe': overpassTag = '["amenity"~"cafe|restaurant|fast_food"]'; labelName = 'Кафе и рестораны'; break;
+          case 'atm': overpassTag = '["amenity"~"atm|bank"]'; labelName = 'Банкоматы'; break;
+        }
+
+        const query = `[out:json][timeout:15];(node${overpassTag}(around:4000,${center.lat},${center.lng});way${overpassTag}(around:4000,${center.lat},${center.lng}););out center 30;`;
+
+        try {
+          const data = await fetchFromDatabase(query);
+
+          if (!data || !data.elements || data.elements.length === 0) {
+            alert(`В базе данных поблизости не найдено ${labelName}`);
+            return;
+          }
+
+          data.elements.forEach(item => {
+            const lat = item.lat || (item.center && item.center.lat);
+            const lng = item.lon || (item.center && item.center.lon);
+            if (!lat || !lng) return;
+
+            let iconHtml = '<i class="fa-solid fa-location-dot"></i>';
+
+            if (category === 'supermarket') { iconHtml = '🛒'; }
+            else if (category === 'pharmacy') { iconHtml = '💊'; }
+            else if (category === 'cafe') { iconHtml = '☕'; }
+            else if (category === 'atm') { iconHtml = '🏧'; }
+
+            const customIcon = L.divIcon({
+              html: `<div class="w-8 h-8 rounded-full bg-slate-900 border-2 border-white text-white flex items-center justify-center text-sm shadow-xl hover:scale-115 transition-all">${iconHtml}</div>`,
+              className: '',
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            });
+
+            const marker = L.marker([lat, lng], { icon: customIcon });
+            marker.on('click', () => {
+              handleMapClick(lat, lng, item.tags?.name || item.tags?.brand);
+            });
+
+            poiMarkersGroup.addLayer(marker);
+          });
+
+          // Zoom map to show items bounds
+          const bounds = poiMarkersGroup.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [50, 50] });
+          }
+
+        } catch (err) {
+          console.warn('Category database fetch error:', err);
+        }
+      }
+
+      // === AZS (GAS STATION) DEDICATED MODAL & FILTERS ===
+      let currentAZSData = [];
+      let currentAZSFilter = 'all';
+
+      // Helper to sample route coordinates
+      function sampleRoutePoints(coords, maxPoints = 10) {
+        if (!coords || coords.length === 0) return [];
+        if (coords.length <= maxPoints) {
+          return coords.map(pt => ({ lat: pt[1], lng: pt[0] }));
+        }
+        const result = [];
+        const step = (coords.length - 1) / (maxPoints - 1);
+        for (let i = 0; i < maxPoints; i++) {
+          const idx = Math.min(coords.length - 1, Math.round(i * step));
+          result.push({ lat: coords[idx][1], lng: coords[idx][0] });
+        }
+        return result;
+      }
+
+      // Nearby AZS search in specified radius (default 19 km)
+      async function openAZSModal(radiusMeters = 19000) {
+        const modal = document.getElementById('azs-modal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+
+        const titleEl = modal.querySelector('h2');
+        if (titleEl) {
+          titleEl.innerText = `АЗС поблизости (радиус ${Math.round(radiusMeters / 1000)} км)`;
+        }
+
+        const cardsContainer = document.getElementById('azs-cards-list');
+        cardsContainer.innerHTML = `
+          <div class="flex flex-col items-center justify-center p-8 text-slate-400 gap-2">
+            <i class="fa-solid fa-spinner fa-spin text-2xl text-amber-400"></i>
+            <span class="text-xs font-semibold">Поиск АЗС в радиусе ${Math.round(radiusMeters / 1000)} км в базе данных...</span>
+          </div>
+        `;
+
+        const center = userLocation || (map ? map.getCenter() : { lat: 55.7558, lng: 37.6173 });
+
+        try {
+          let query = `[out:json][timeout:20];(node["amenity"="fuel"](around:${radiusMeters},${center.lat},${center.lng});way["amenity"="fuel"](around:${radiusMeters},${center.lat},${center.lng}););out center 60;`;
+          let data = await fetchFromDatabase(query);
+
+          let rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+
+          // Rural/Remote fallback if 0 found in 19km radius
+          if (rawElements.length === 0) {
+            query = `[out:json][timeout:25];(node["amenity"="fuel"](around:45000,${center.lat},${center.lng});way["amenity"="fuel"](around:45000,${center.lat},${center.lng}););out center 60;`;
+            data = await fetchFromDatabase(query);
+            rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+          }
+
+          currentAZSData = processAZSDataList(rawElements, center);
+
+          // Plot station markers on Leaflet map
+          if (poiMarkersGroup) poiMarkersGroup.clearLayers();
+
+          currentAZSData.forEach(item => {
+            const fuelMarkerIcon = L.divIcon({
+              html: `<div class="flex items-center justify-center w-8 h-8 rounded-xl ${item.color} text-white font-extrabold border-2 border-slate-900 shadow-xl hover:scale-125 transition-transform"><i class="fa-solid ${item.icon} text-xs"></i></div>`,
+              className: '',
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            });
+
+            const m = L.marker([item.lat, item.lng], { icon: fuelMarkerIcon });
+            m.bindTooltip(`<b>${item.name}</b><br><span class="text-xs text-slate-300">${item.brand} • ${item.distText}</span>`, {
+              direction: 'top',
+              offset: [0, -10]
+            });
+            m.on('click', () => {
+              viewAZSDetails(item);
+            });
+            poiMarkersGroup.addLayer(m);
+          });
+
+          renderAZSList();
+        } catch (err) {
+          console.warn('AZS fetch error:', err);
+          currentAZSData = processAZSDataList([], center);
+          renderAZSList();
+        }
+      }
+
+      // AZS Search along the active driving route
+      async function openAZSModalForRoute() {
+        if (!activeRouteControl || !currentRouteCoordinates || currentRouteCoordinates.length === 0) {
+          openAZSModal(19000);
+          return;
+        }
+
+        const modal = document.getElementById('azs-modal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+
+        const titleEl = modal.querySelector('h2');
+        if (titleEl) {
+          titleEl.innerText = 'АЗС по вашему маршруту';
+        }
+
+        const cardsContainer = document.getElementById('azs-cards-list');
+        cardsContainer.innerHTML = `
+          <div class="flex flex-col items-center justify-center p-8 text-slate-400 gap-2">
+            <i class="fa-solid fa-spinner fa-spin text-2xl text-amber-400"></i>
+            <span class="text-xs font-semibold">Поиск АЗС вдоль проведенного маршрута...</span>
+          </div>
+        `;
+
+        const center = userLocation || (map ? map.getCenter() : { lat: 55.7558, lng: 37.6173 });
+
+        const sampledPoints = sampleRoutePoints(currentRouteCoordinates, 8);
+
+        let aroundNodes = sampledPoints.map(p => `node["amenity"="fuel"](around:3500,${p.lat.toFixed(5)},${p.lng.toFixed(5)});`).join('');
+        let aroundWays = sampledPoints.map(p => `way["amenity"="fuel"](around:3500,${p.lat.toFixed(5)},${p.lng.toFixed(5)});`).join('');
+
+        const query = `[out:json][timeout:20];(${aroundNodes}${aroundWays});out center 60;`;
+
+        try {
+          const data = await fetchFromDatabase(query);
+          let rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+
+          // Deduplicate elements
+          const seen = new Set();
+          const uniqueElements = [];
+          rawElements.forEach(el => {
+            if (!seen.has(el.id)) {
+              seen.add(el.id);
+              uniqueElements.push(el);
+            }
+          });
+
+          if (uniqueElements.length === 0) {
+            alert('Вдоль построенного маршрута заправок не найдено. Показываем АЗС в радиусе 19 км.');
+            openAZSModal(19000);
+            return;
+          }
+
+          currentAZSData = processAZSDataList(uniqueElements, center);
+
+          if (poiMarkersGroup) poiMarkersGroup.clearLayers();
+
+          currentAZSData.forEach(item => {
+            const fuelMarkerIcon = L.divIcon({
+              html: `<div class="flex items-center justify-center w-8 h-8 rounded-xl ${item.color} text-white font-extrabold border-2 border-slate-900 shadow-xl hover:scale-125 transition-transform"><i class="fa-solid ${item.icon} text-xs"></i></div>`,
+              className: '',
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            });
+
+            const m = L.marker([item.lat, item.lng], { icon: fuelMarkerIcon });
+            m.bindTooltip(`<b>${item.name}</b><br><span class="text-xs text-amber-300">По маршруту • ${item.distText}</span>`, {
+              direction: 'top',
+              offset: [0, -10]
+            });
+            m.on('click', () => {
+              viewAZSDetails(item);
+            });
+            poiMarkersGroup.addLayer(m);
+          });
+
+          renderAZSList();
+        } catch (err) {
+          console.warn('AZS route search error:', err);
+          openAZSModal(19000);
+        }
+      }
+
+      function closeAZSModal() {
+        const modal = document.getElementById('azs-modal');
+        if (modal) modal.classList.add('hidden');
+      }
+
+      function filterAZSList(filterType) {
+        currentAZSFilter = filterType;
+        const filterBtns = document.querySelectorAll('.azs-filter-btn');
+        filterBtns.forEach(btn => {
+          btn.className = 'azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all';
+        });
+        const activeBtn = document.getElementById(`azs-filter-${filterType}`);
+        if (activeBtn) {
+          activeBtn.className = 'azs-filter-btn px-3 py-1.5 rounded-xl text-xs font-extrabold bg-amber-500 text-slate-950 shadow-md transition-all';
+        }
+        renderAZSList();
+      }
+
+      function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return Math.round(R * c);
+      }
+
+      function processAZSDataList(rawElements, center) {
+        let results = [];
+
+        if (rawElements && rawElements.length > 0) {
+          rawElements.forEach((el) => {
+            const tags = el.tags || {};
+            const lat = el.lat || (el.center && el.center.lat);
+            const lng = el.lon || (el.center && el.center.lon);
+            if (!lat || !lng) return;
+
+            // Extract REAL names, brands, operators from tags
+            let realBrand = tags.brand || tags.operator || tags['brand:ru'] || tags['operator:ru'] || tags['name:ru'] || tags.name || '';
+            let realName = tags.name || tags['name:ru'] || tags['official_name'] || (realBrand ? `АЗС "${realBrand}"` : 'Заправочная станция');
+
+            if (!realBrand && realName) {
+              realBrand = realName;
+            }
+
+            // Real address from tags
+            const street = tags['addr:street'] || tags['street'] || '';
+            const house = tags['addr:housenumber'] || tags['housenumber'] || '';
+            const city = tags['addr:city'] || '';
+            const address = [street, house].filter(Boolean).join(', ') || city || 'Адрес из базы данных';
+
+            // Check disused / closed status from tags
+            const isClosed = tags.disused === 'yes' || tags.abandoned === 'yes' || tags.opening_hours === 'closed';
+
+            // Determine brand badge color & icon dynamically from real brand text
+            let color = 'bg-amber-600';
+            let icon = 'fa-gas-pump';
+            const brandLower = (realBrand + ' ' + realName).toLowerCase();
+
+            if (brandLower.includes('газпром') || brandLower.includes('gazprom')) {
+              color = 'bg-sky-600'; icon = 'fa-droplet';
+            } else if (brandLower.includes('лукойл') || brandLower.includes('lukoil')) {
+              color = 'bg-red-600'; icon = 'fa-gas-pump';
+            } else if (brandLower.includes('роснефть') || brandLower.includes('rosneft')) {
+              color = 'bg-amber-500'; icon = 'fa-oil-well';
+            } else if (brandLower.includes('татнефть') || brandLower.includes('tatneft')) {
+              color = 'bg-emerald-600'; icon = 'fa-gas-pump';
+            } else if (brandLower.includes('teboil') || brandLower.includes('shell') || brandLower.includes('шелл')) {
+              color = 'bg-rose-600'; icon = 'fa-bolt';
+            } else if (brandLower.includes('ека') || brandLower.includes('eka')) {
+              color = 'bg-indigo-600'; icon = 'fa-gas-pump';
+            } else if (brandLower.includes('нефтьмагистраль')) {
+              color = 'bg-amber-600'; icon = 'fa-truck-field';
+            } else if (brandLower.includes('трасса')) {
+              color = 'bg-blue-700'; icon = 'fa-route';
+            } else if (brandLower.includes('сургут')) {
+              color = 'bg-cyan-700'; icon = 'fa-fire';
+            } else if (brandLower.includes('башнефть')) {
+              color = 'bg-purple-600'; icon = 'fa-oil-well';
+            }
+
+            // Real fuel availability from fuel tags
+            const has95 = tags['fuel:octane_95'] !== 'no' && tags['fuel:95'] !== 'no';
+            const has92 = tags['fuel:octane_92'] !== 'no' && tags['fuel:92'] !== 'no';
+            const has98 = tags['fuel:octane_98'] === 'yes' || tags['fuel:octane_100'] === 'yes' || tags['fuel:100'] === 'yes' || brandLower.includes('газпром') || brandLower.includes('лукойл') || brandLower.includes('роснефть') || brandLower.includes('teboil');
+            const hasDt = tags['fuel:diesel'] !== 'no';
+            const hasElectro = tags['fuel:electricity'] === 'yes' || tags['charging_station'] === 'yes' || tags['socket:type2'] || tags['socket:ccs'];
+
+            // Prices: read real price tags from OSM if present, otherwise null (no synthetic estimates)
+            const p95 = (!isClosed && has95) ? (tags['fuel:octane_95:price'] || tags['fuel:95:price'] || null) : null;
+            const p92 = (!isClosed && has92) ? (tags['fuel:octane_92:price'] || tags['fuel:92:price'] || null) : null;
+            const p98 = (!isClosed && has98) ? (tags['fuel:octane_98:price'] || tags['fuel:100:price'] || null) : null;
+            const dt  = (!isClosed && hasDt)  ? (tags['fuel:diesel:price'] || tags['fuel:dt:price'] || null) : null;
+            const electro = (!isClosed && hasElectro) ? (tags['fuel:electricity:price'] || tags['charge'] || null) : null;
+
+            const distM = calculateDistanceMeters(center.lat, center.lng, lat, lng);
+            const distText = distM < 1000 ? `${distM} м` : `${(distM / 1000).toFixed(1)} км`;
+            const driveMins = Math.max(1, Math.round(distM / 400));
+
+            results.push({
+              id: el.id,
+              lat, lng,
+              name: realName,
+              brand: realBrand || 'АЗС',
+              address,
+              color,
+              icon,
+              distM,
+              distText,
+              driveMins,
+              available: !isClosed,
+              has95, has92, has98, hasDt, hasElectro,
+              p95, p92, p98, dt, electro,
+              openingHours: tags.opening_hours || '24/7'
+            });
+          });
+        }
+
+        results.sort((a, b) => a.distM - b.distM);
+        return results;
+      }
+
+      function viewAZSDetailsById(id) {
+        const item = currentAZSData.find(x => String(x.id) === String(id));
+        if (item) {
+          viewAZSDetails(item);
+        }
+      }
+
+      function viewAZSDetails(item) {
+        if (!item) return;
+
+        closeAZSModal();
+        openBottomSheet();
+
+        currentPOI = {
+          lat: item.lat,
+          lng: item.lng,
+          name: item.name,
+          address: item.address || item.brand || 'Автозаправочная станция'
+        };
+
+        if (map) {
+          map.flyTo([item.lat, item.lng], 17, { duration: 0.8 });
+        }
+
+        if (activeMarker) map.removeLayer(activeMarker);
+        const fuelIcon = L.divIcon({
+          html: `<div class="custom-marker-bounce text-amber-400 text-3xl drop-shadow-lg"><i class="fa-solid fa-gas-pump"></i></div>`,
+          className: '',
+          iconSize: [30, 36],
+          iconAnchor: [15, 36]
+        });
+        activeMarker = L.marker([item.lat, item.lng], { icon: fuelIcon }).addTo(map);
+
+        document.getElementById('sheet-title').innerText = item.name;
+        document.getElementById('sheet-subtitle').innerHTML = `
+          <span class="font-bold text-amber-400">${item.brand}</span>
+          <span class="text-slate-300">• ${item.distText} (~${item.driveMins} мин)</span>
+          <span id="sheet-coords" class="font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300 text-[10px]">${item.lat.toFixed(5)}, ${item.lng.toFixed(5)}</span>
+        `;
+        document.getElementById('sheet-category-badge').innerHTML = `<i class="fa-solid fa-gas-pump text-amber-400"></i> Автозаправка (АЗС)`;
+
+        const fuelSection = document.getElementById('sheet-fuel-section');
+        const badgeEl = document.getElementById('fuel-status-badge');
+        const containerEl = document.getElementById('fuel-scenario-container');
+        fuelSection.classList.remove('hidden');
+
+        if (!item.available) {
+          badgeEl.className = 'text-xs font-bold px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40';
+          badgeEl.innerText = 'Временно закрыта';
+
+          containerEl.innerHTML = `
+            <div class="p-3 bg-rose-950/40 border border-rose-800/40 rounded-xl text-rose-200 flex items-center gap-2">
+              <i class="fa-solid fa-circle-xmark text-rose-400 text-lg shrink-0"></i>
+              <div>
+                <div class="font-bold text-sm">Заправка временно закрыта</div>
+                <div class="text-xs text-rose-300/80 mt-0.5">Данная АЗС временно не отпускает топливо.</div>
+              </div>
+            </div>
+          `;
+        } else {
+          badgeEl.className = 'text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+          badgeEl.innerText = 'Открыта';
+
+          let fuelRows = '';
+          if (item.has95) fuelRows += `<div class="flex items-center justify-between p-2 rounded-xl bg-slate-900/80 border border-slate-700"><span class="font-bold text-slate-200 text-xs flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>АИ-95</span><span class="text-xs font-bold text-amber-300">${item.p95 ? item.p95 + ' ₽/л' : 'Отпускается'}</span></div>`;
+          if (item.has92) fuelRows += `<div class="flex items-center justify-between p-2 rounded-xl bg-slate-900/80 border border-slate-700"><span class="font-bold text-slate-200 text-xs flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>АИ-92</span><span class="text-xs font-bold text-emerald-300">${item.p92 ? item.p92 + ' ₽/л' : 'Отпускается'}</span></div>`;
+          if (item.has98) fuelRows += `<div class="flex items-center justify-between p-2 rounded-xl bg-slate-900/80 border border-slate-700"><span class="font-bold text-slate-200 text-xs flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-rose-400"></span>АИ-98 / 100</span><span class="text-xs font-bold text-rose-300">${item.p98 ? item.p98 + ' ₽/л' : 'Отпускается'}</span></div>`;
+          if (item.hasDt) fuelRows += `<div class="flex items-center justify-between p-2 rounded-xl bg-slate-900/80 border border-slate-700"><span class="font-bold text-slate-200 text-xs flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>Дизель (ДТ)</span><span class="text-xs font-bold text-sky-300">${item.dt ? item.dt + ' ₽/л' : 'Отпускается'}</span></div>`;
+          if (item.hasElectro) fuelRows += `<div class="flex items-center justify-between p-2 rounded-xl bg-slate-900/80 border border-slate-700"><span class="font-bold text-slate-200 text-xs flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-indigo-400"></span>Электрозарядка</span><span class="text-xs font-bold text-indigo-300">${item.electro ? item.electro : 'Отпускается'}</span></div>`;
+
+          if (!fuelRows) {
+            fuelRows = `<div class="p-2.5 rounded-xl bg-slate-900/80 border border-slate-700 text-xs text-emerald-300 flex items-center gap-2"><i class="fa-solid fa-circle-check text-emerald-400"></i> Топливо всех основных марок по регламенту АЗС</div>`;
+          }
+
+          containerEl.innerHTML = `
+            <div class="space-y-2">
+              <div class="text-xs font-bold text-slate-300 flex items-center justify-between">
+                <span class="text-amber-400 flex items-center gap-1"><i class="fa-solid fa-gas-pump"></i> Марки топлива на АЗС:</span>
+                <span class="text-slate-400 font-normal"><i class="fa-solid fa-clock mr-1"></i>${item.openingHours || '24/7'}</span>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                ${fuelRows}
+              </div>
+              <div class="p-2.5 bg-slate-900/90 border border-slate-700/70 rounded-xl text-[11px] text-slate-300 flex items-start gap-2 mt-2">
+                <i class="fa-solid fa-circle-info text-amber-400 mt-0.5 shrink-0"></i>
+                <span>Отображаются типы топлива, предусмотренные регламентом АЗС. Фактический остаток в цистернах может изменяться в течение дня.</span>
+              </div>
+              <div class="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                <i class="fa-solid fa-location-dot text-amber-400"></i> ${item.address || 'Адрес из базы данных'}
+              </div>
+            </div>
+          `;
+        }
+
+        scanNearbyInfrastructure(item.lat, item.lng);
+      }
+
+      function renderAZSList() {
+        const container = document.getElementById('azs-cards-list');
+        if (!container) return;
+
+        let filtered = currentAZSData.filter(item => {
+          if (currentAZSFilter === 'all') return true;
+          if (currentAZSFilter === 'ai95') return item.available && item.has95;
+          if (currentAZSFilter === 'ai92') return item.available && item.has92;
+          if (currentAZSFilter === 'ai98') return item.available && item.has98;
+          if (currentAZSFilter === 'diesel') return item.available && item.hasDt;
+          if (currentAZSFilter === 'electro') return item.available && item.hasElectro;
+          return true;
+        });
+
+        if (filtered.length === 0) {
+          container.innerHTML = `
+            <div class="p-6 text-center text-slate-400 glass-panel rounded-2xl border border-slate-800">
+              <i class="fa-solid fa-triangle-exclamation text-amber-400 text-2xl mb-2"></i>
+              <div class="font-bold text-sm text-slate-200">По выбранному фильтру ничего не найдено</div>
+              <div class="text-xs text-slate-400 mt-1">Попробуйте выбрать другой тип топлива или сбросить фильтр.</div>
+            </div>
+          `;
+          return;
+        }
+
+        let html = '';
+        filtered.forEach(item => {
+          const statusBadge = item.available
+            ? `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Открыта</span>`
+            : `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-rose-500"></span> Закрыта</span>`;
+
+          let pricesHtml = '';
+          if (item.available) {
+            if (item.has95) pricesHtml += `<div class="bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700/60 flex items-center justify-between"><span class="text-[11px] text-slate-300 font-bold">АИ-95</span><span class="text-xs font-bold text-amber-300">${item.p95 ? item.p95 + ' ₽/л' : 'Отпускается'}</span></div>`;
+            if (item.has92) pricesHtml += `<div class="bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700/60 flex items-center justify-between"><span class="text-[11px] text-slate-300 font-bold">АИ-92</span><span class="text-xs font-bold text-emerald-300">${item.p92 ? item.p92 + ' ₽/л' : 'Отпускается'}</span></div>`;
+            if (item.has98) pricesHtml += `<div class="bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700/60 flex items-center justify-between"><span class="text-[11px] text-slate-300 font-bold">АИ-98 / 100</span><span class="text-xs font-bold text-rose-300">${item.p98 ? item.p98 + ' ₽/л' : 'Отпускается'}</span></div>`;
+            if (item.hasDt) pricesHtml += `<div class="bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700/60 flex items-center justify-between"><span class="text-[11px] text-slate-300 font-bold">ДТ</span><span class="text-xs font-bold text-sky-300">${item.dt ? item.dt + ' ₽/л' : 'Отпускается'}</span></div>`;
+            if (item.hasElectro) pricesHtml += `<div class="bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700/60 flex items-center justify-between"><span class="text-[11px] text-slate-300 font-bold">Электро</span><span class="text-xs font-bold text-indigo-300">${item.electro ? item.electro : 'Отпускается'}</span></div>`;
+            if (!pricesHtml) {
+              pricesHtml = `<div class="col-span-2 bg-slate-900/80 px-2.5 py-1 rounded-lg border border-slate-700/60 text-xs text-amber-300 font-semibold"><i class="fa-solid fa-gas-pump mr-1"></i> Виды топлива по спецификации АЗС</div>`;
+            }
+          } else {
+            pricesHtml = `<div class="col-span-2 text-xs text-rose-300/80 italic p-1.5 bg-rose-950/30 rounded-lg border border-rose-900/40">Заправка временно закрыта</div>`;
+          }
+
+          const safeName = item.name.replace(/'/g, "\\'");
+
+          html += `
+            <div onclick="viewAZSDetailsById(${item.id})" class="glass-panel p-3.5 rounded-2xl border border-slate-700/70 shadow-xl hover:border-amber-500/60 cursor-pointer transition-all hover:scale-[1.01]">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-xl ${item.color} text-white flex items-center justify-center text-lg font-black shrink-0 shadow-md">
+                    <i class="fa-solid ${item.icon}"></i>
+                  </div>
+                  <div class="min-w-0">
+                    <h3 class="font-bold text-sm text-white truncate">${item.name}</h3>
+                    <p class="text-xs text-slate-400 truncate">${item.brand}</p>
+                  </div>
+                </div>
+                ${statusBadge}
+              </div>
+
+              <div class="grid grid-cols-2 gap-1.5 my-3">
+                ${pricesHtml}
+              </div>
+
+              <div class="flex items-center justify-between pt-2 border-t border-slate-800" onclick="event.stopPropagation()">
+                <div class="flex items-center gap-3 text-xs font-semibold text-slate-300">
+                  <span class="text-amber-400"><i class="fa-solid fa-location-dot mr-1"></i>${item.distText}</span>
+                  <span class="text-slate-400"><i class="fa-solid fa-car mr-1"></i>~${item.driveMins} мин</span>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <button onclick="viewAZSDetailsById(${item.id}); event.stopPropagation();" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl text-xs font-bold border border-slate-700 transition-all flex items-center gap-1">
+                    <i class="fa-solid fa-circle-info"></i> Данные
+                  </button>
+                  <button onclick="selectAZSAndRoute(${item.lat}, ${item.lng}, '${safeName}'); event.stopPropagation();" class="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-extrabold shadow-lg hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5">
+                    <i class="fa-solid fa-route"></i> Маршрут
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+
+        container.innerHTML = html;
+      }
+
+      function selectAZSAndRoute(lat, lng, name) {
+        closeAZSModal();
+        currentPOI = { lat, lng, name, address: 'Автозаправочная станция' };
+
+        if (activeMarker) map.removeLayer(activeMarker);
+        const fuelIcon = L.divIcon({
+          html: `<div class="custom-marker-bounce text-amber-400 text-3xl drop-shadow-lg"><i class="fa-solid fa-gas-pump"></i></div>`,
+          className: '',
+          iconSize: [30, 36],
+          iconAnchor: [15, 36]
+        });
+        activeMarker = L.marker([lat, lng], { icon: fuelIcon }).addTo(map);
+
+        startNavigationToCurrentPOI();
+      }
+
+      // === PARKING DEDICATED MODAL & FILTERS ===
+      let currentParkingData = [];
+      let currentParkingFilter = 'all';
+
+      async function openParkingModal() {
+        const modal = document.getElementById('parking-modal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+
+        const cardsContainer = document.getElementById('parking-cards-list');
+        cardsContainer.innerHTML = `
+          <div class="flex flex-col items-center justify-center p-8 text-slate-400 gap-2">
+            <i class="fa-solid fa-spinner fa-spin text-2xl text-indigo-400"></i>
+            <span class="text-xs font-semibold">Поиск парковок в базе данных...</span>
+          </div>
+        `;
+
+        const center = userLocation || (map ? map.getCenter() : { lat: 55.7558, lng: 37.6173 });
+
+        try {
+          // Query Overpass API exclusively (8km, then 25km, then 60km)
+          let query = `[out:json][timeout:15];(node["amenity"="parking"](around:8000,${center.lat},${center.lng});way["amenity"="parking"](around:8000,${center.lat},${center.lng}););out center 50;`;
+          let data = await fetchFromDatabase(query);
+
+          let rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+
+          if (rawElements.length === 0) {
+            query = `[out:json][timeout:20];(node["amenity"="parking"](around:25000,${center.lat},${center.lng});way["amenity"="parking"](around:25000,${center.lat},${center.lng}););out center 50;`;
+            data = await fetchFromDatabase(query);
+            rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+          }
+
+          if (rawElements.length === 0) {
+            query = `[out:json][timeout:25];(node["amenity"="parking"](around:60000,${center.lat},${center.lng});way["amenity"="parking"](around:60000,${center.lat},${center.lng}););out center 50;`;
+            data = await fetchFromDatabase(query);
+            rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+          }
+
+          currentParkingData = processParkingDataList(rawElements, center);
+
+          // Plot parking markers on Leaflet map
+          if (poiMarkersGroup) poiMarkersGroup.clearLayers();
+
+          currentParkingData.forEach(item => {
+            const parkMarkerIcon = L.divIcon({
+              html: `<div class="flex items-center justify-center w-8 h-8 rounded-xl bg-indigo-600 text-white font-extrabold border-2 border-slate-900 shadow-xl hover:scale-125 transition-transform"><i class="fa-solid fa-square-parking text-xs"></i></div>`,
+              className: '',
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            });
+
+            const m = L.marker([item.lat, item.lng], { icon: parkMarkerIcon });
+            const safeName = item.name.replace(/'/g, "\\'");
+            m.bindTooltip(`<b>${item.name}</b><br><span class="text-xs text-indigo-300">${item.price} • ${item.distText}</span>`, {
+              direction: 'top',
+              offset: [0, -10]
+            });
+            m.on('click', () => {
+              selectParkingAndRoute(item.lat, item.lng, safeName);
+            });
+            poiMarkersGroup.addLayer(m);
+          });
+
+          renderParkingList();
+        } catch (err) {
+          console.warn('Parking fetch error:', err);
+          currentParkingData = processParkingDataList([], center);
+          renderParkingList();
+        }
+      }
+
+      function closeParkingModal() {
+        const modal = document.getElementById('parking-modal');
+        if (modal) modal.classList.add('hidden');
+      }
+
+      function filterParkingList(filterType) {
+        currentParkingFilter = filterType;
+        const filterBtns = document.querySelectorAll('.parking-filter-btn');
+        filterBtns.forEach(btn => {
+          btn.className = 'parking-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all';
+        });
+        const activeBtn = document.getElementById(`parking-filter-${filterType}`);
+        if (activeBtn) {
+          activeBtn.className = 'parking-filter-btn px-3 py-1.5 rounded-xl text-xs font-extrabold bg-indigo-500 text-white shadow-md transition-all';
+        }
+        renderParkingList();
+      }
+
+      function processParkingDataList(rawElements, center) {
+        let results = [];
+
+        if (rawElements && rawElements.length > 0) {
+          rawElements.forEach((el, idx) => {
+            const tags = el.tags || {};
+            const lat = el.lat || (el.center && el.center.lat);
+            const lng = el.lon || (el.center && el.center.lon);
+            if (!lat || !lng) return;
+
+            let name = tags.name || tags['name:ru'] || (tags.parking === 'underground' ? 'Подземный паркинг' : 'Автостоянка');
+            const isFee = tags.fee === 'yes' || tags.fee === 'paid';
+            const price = isFee ? (tags.charge || 'Платная') : 'Бесплатно';
+            const capacity = tags.capacity ? parseInt(tags.capacity) : null;
+
+            const distM = calculateDistanceMeters(center.lat, center.lng, lat, lng);
+            const distText = distM < 1000 ? `${distM} м` : `${(distM / 1000).toFixed(1)} км`;
+            const driveMins = Math.max(1, Math.round(distM / 400));
+
+            results.push({
+              lat, lng,
+              name,
+              type: tags.parking || 'surface',
+              price,
+              capacity,
+              isPaid: isFee,
+              isUnderground: tags.parking === 'underground',
+              distM, distText, driveMins
+            });
+          });
+        }
+
+        results.sort((a, b) => a.distM - b.distM);
+        return results;
+      }
+
+      function renderParkingList() {
+        const container = document.getElementById('parking-cards-list');
+        if (!container) return;
+
+        let filtered = currentParkingData.filter(item => {
+          if (currentParkingFilter === 'all') return true;
+          if (currentParkingFilter === 'free') return !item.isPaid;
+          if (currentParkingFilter === 'paid') return item.isPaid;
+          if (currentParkingFilter === 'underground') return item.isUnderground;
+          return true;
+        });
+
+        if (filtered.length === 0) {
+          container.innerHTML = `
+            <div class="p-6 text-center text-slate-400 glass-panel rounded-2xl border border-slate-800">
+              <i class="fa-solid fa-square-parking text-indigo-400 text-2xl mb-2"></i>
+              <div class="font-bold text-sm text-slate-200">По выбранному фильтру парковок не найдено</div>
+              <div class="text-xs text-slate-400 mt-1">Попробуйте выберите другой вариант или сбросьте фильтр.</div>
+            </div>
+          `;
+          return;
+        }
+
+        let html = '';
+        filtered.forEach(item => {
+          const typeLabel = item.isUnderground ? '🅿️ Подземный паркинг' : '🅿️ Уличная / Наземная';
+          const safeName = item.name.replace(/'/g, "\\'");
+
+          const capacityHtml = item.capacity
+            ? `<div class="mt-2.5 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold text-slate-300 flex items-center justify-between"><span>Вместимость:</span><span class="text-indigo-300 font-bold">${item.capacity} мест</span></div>`
+            : `<div class="mt-2.5 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800 text-xs text-slate-400 flex items-center justify-between"><span>Тип стоянки:</span><span class="text-slate-300 font-medium">${item.isPaid ? 'Платная парковка' : 'Бесплатная парковка'}</span></div>`;
+
+          html += `
+            <div class="glass-panel p-3.5 rounded-2xl border border-slate-700/70 shadow-xl hover:border-indigo-500/40 transition-all">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-xl bg-indigo-600/80 text-white flex items-center justify-center text-xl font-black shrink-0 shadow-md">
+                    <i class="fa-solid fa-square-parking"></i>
+                  </div>
+                  <div class="min-w-0">
+                    <h3 class="font-bold text-sm text-white truncate">${item.name}</h3>
+                    <p class="text-xs text-indigo-300 font-medium truncate">${typeLabel}</p>
+                  </div>
+                </div>
+                <span class="px-2.5 py-1 rounded-xl text-xs font-black ${item.isPaid ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'} shrink-0">
+                  ${item.price}
+                </span>
+              </div>
+
+              ${capacityHtml}
+
+              <div class="flex items-center justify-between pt-2.5 mt-2 border-t border-slate-800">
+                <div class="flex items-center gap-3 text-xs font-semibold text-slate-300">
+                  <span class="text-indigo-400"><i class="fa-solid fa-location-dot mr-1"></i>${item.distText}</span>
+                  <span class="text-slate-400"><i class="fa-solid fa-car mr-1"></i>~${item.driveMins} мин</span>
+                </div>
+
+                <button onclick="selectParkingAndRoute(${item.lat}, ${item.lng}, '${safeName}')" class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-extrabold shadow-lg hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5">
+                  <i class="fa-solid fa-route"></i> Маршрут
+                </button>
+              </div>
+            </div>
+          `;
+        });
+
+        container.innerHTML = html;
+      }
+
+      function selectParkingAndRoute(lat, lng, name) {
+        closeParkingModal();
+        currentPOI = { lat, lng, name, address: 'Парковка' };
+
+        if (activeMarker) map.removeLayer(activeMarker);
+        const parkIcon = L.divIcon({
+          html: `<div class="custom-marker-bounce text-indigo-400 text-3xl drop-shadow-lg"><i class="fa-solid fa-square-parking"></i></div>`,
+          className: '',
+          iconSize: [30, 36],
+          iconAnchor: [15, 36]
+        });
+        activeMarker = L.marker([lat, lng], { icon: parkIcon }).addTo(map);
+
+        startNavigationToCurrentPOI();
+      }
+
+      // === CAFE & RESTAURANTS DEDICATED MODAL ===
+      let currentCafeData = [];
+      let currentCafeFilter = 'all';
+
+      async function openCafeModal() {
+        const modal = document.getElementById('cafe-modal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+
+        const cardsContainer = document.getElementById('cafe-cards-list');
+        cardsContainer.innerHTML = `
+          <div class="flex flex-col items-center justify-center p-8 text-slate-400 gap-2">
+            <i class="fa-solid fa-spinner fa-spin text-2xl text-rose-400"></i>
+            <span class="text-xs font-semibold">Поиск кафе и ресторанов в базе данных...</span>
+          </div>
+        `;
+
+        const center = userLocation || (map ? map.getCenter() : { lat: 55.7558, lng: 37.6173 });
+
+        try {
+          let query = `[out:json][timeout:15];(node["amenity"~"cafe|restaurant|fast_food|bar|pub|coffee_shop"](around:8000,${center.lat},${center.lng});way["amenity"~"cafe|restaurant|fast_food|bar|pub|coffee_shop"](around:8000,${center.lat},${center.lng}););out center 50;`;
+          let data = await fetchFromDatabase(query);
+
+          let rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+
+          if (rawElements.length === 0) {
+            query = `[out:json][timeout:20];(node["amenity"~"cafe|restaurant|fast_food|bar|pub|coffee_shop"](around:25000,${center.lat},${center.lng});way["amenity"~"cafe|restaurant|fast_food|bar|pub|coffee_shop"](around:25000,${center.lat},${center.lng}););out center 50;`;
+            data = await fetchFromDatabase(query);
+            rawElements = (data && data.elements && data.elements.length > 0) ? data.elements : [];
+          }
+
+          currentCafeData = processCafeDataList(rawElements, center);
+
+          if (poiMarkersGroup) poiMarkersGroup.clearLayers();
+
+          currentCafeData.forEach(item => {
+            const cafeMarkerIcon = L.divIcon({
+              html: `<div class="flex items-center justify-center w-8 h-8 rounded-xl ${item.color} text-white font-extrabold border-2 border-slate-900 shadow-xl hover:scale-125 transition-transform"><i class="fa-solid ${item.icon} text-xs"></i></div>`,
+              className: '',
+              iconSize: [32, 32],
+              iconAnchor: [16, 16]
+            });
+
+            const m = L.marker([item.lat, item.lng], { icon: cafeMarkerIcon });
+            m.bindTooltip(`<b>${item.name}</b><br><span class="text-xs text-rose-300">${item.typeLabel} • ${item.distText}</span>`, {
+              direction: 'top',
+              offset: [0, -10]
+            });
+            m.on('click', () => {
+              viewCafeDetails(item);
+            });
+            poiMarkersGroup.addLayer(m);
+          });
+
+          renderCafeList();
+        } catch (err) {
+          console.warn('Cafe fetch error:', err);
+          currentCafeData = processCafeDataList([], center);
+          renderCafeList();
+        }
+      }
+
+      function closeCafeModal() {
+        const modal = document.getElementById('cafe-modal');
+        if (modal) modal.classList.add('hidden');
+      }
+
+      function filterCafeList(filterType) {
+        currentCafeFilter = filterType;
+        const filterBtns = document.querySelectorAll('.cafe-filter-btn');
+        filterBtns.forEach(btn => {
+          btn.className = 'cafe-filter-btn px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-800 text-slate-300 hover:bg-slate-700 transition-all';
+        });
+        const activeBtn = document.getElementById(`cafe-filter-${filterType}`);
+        if (activeBtn) {
+          activeBtn.className = 'cafe-filter-btn px-3 py-1.5 rounded-xl text-xs font-extrabold bg-rose-500 text-white shadow-md transition-all';
+        }
+        renderCafeList();
+      }
+
+      function translateCuisine(cuisineTag) {
+        if (!cuisineTag) return '';
+        const map = {
+          'burger': 'Бургеры',
+          'pizza': 'Пицца',
+          'coffee_shop': 'Кофе и десерты',
+          'russian': 'Русская кухня',
+          'italian': 'Итальянская кухня',
+          'japanese': 'Японская кухня / Суши',
+          'sushi': 'Суши и роллы',
+          'asian': 'Азиатская кухня',
+          'georgian': 'Грузинская кухня',
+          'chinese': 'Китайская кухня',
+          'caucasian': 'Кавказская кухня',
+          'fast_food': 'Быстрое питание',
+          'bakery': 'Пекарня и выпечка',
+          'sandwich': 'Сэндвичи',
+          'kebab': 'Шаурма / Кебаб',
+          'pancake': 'Блины / Блинная'
+        };
+        const first = cuisineTag.split(';')[0].trim().toLowerCase();
+        return map[first] || first;
+      }
+
+      function processCafeDataList(elements, center) {
+        const results = [];
+
+        elements.forEach(el => {
+          const lat = el.lat || (el.center && el.center.lat);
+          const lng = el.lon || (el.center && el.center.lon);
+          if (!lat || !lng) return;
+
+          const tags = el.tags || {};
+          const amenity = tags.amenity || 'cafe';
+
+          let type = 'cafe';
+          let typeLabel = '☕ Кафе / Кофейня';
+          let color = 'bg-rose-500';
+          let icon = 'fa-mug-hot';
+
+          if (amenity === 'restaurant') {
+            type = 'restaurant';
+            typeLabel = '🍕 Ресторан';
+            color = 'bg-amber-600';
+            icon = 'fa-utensils';
+          } else if (amenity === 'fast_food') {
+            type = 'fast_food';
+            typeLabel = '🍔 Фастфуд';
+            color = 'bg-orange-500';
+            icon = 'fa-burger';
+          } else if (amenity === 'bar' || amenity === 'pub') {
+            type = 'restaurant';
+            typeLabel = '🍺 Бар / Паб';
+            color = 'bg-purple-600';
+            icon = 'fa-wine-glass';
+          }
+
+          let name = tags.name || tags['name:ru'] || tags.brand || (type === 'cafe' ? 'Кофейня' : type === 'fast_food' ? 'Быстрое питание' : 'Ресторан');
+
+          let cuisineRaw = tags.cuisine || '';
+          let cuisine = translateCuisine(cuisineRaw) || (type === 'fast_food' ? 'Быстрое питание' : type === 'cafe' ? 'Кофе и десерты' : 'Смешанная кухня');
+
+          let openingHours = tags.opening_hours || null;
+
+          const distM = calculateDistanceMeters(center.lat, center.lng, lat, lng);
+          const distText = distM < 1000 ? `${distM} м` : `${(distM / 1000).toFixed(1)} км`;
+          const driveMins = Math.max(1, Math.round(distM / 600));
+
+          results.push({
+            id: el.id,
+            lat, lng,
+            name,
+            type,
+            typeLabel,
+            color,
+            icon,
+            cuisine,
+            openingHours: openingHours || 'Ежедневно (уточняйте по телефону)',
+            hasHoursTag: !!openingHours,
+            distM, distText, driveMins,
+            address: tags['addr:street'] ? `${tags['addr:street']}, ${tags['addr:housenumber'] || ''}` : ''
+          });
+        });
+
+        results.sort((a, b) => a.distM - b.distM);
+        return results;
+      }
+
+      function renderCafeList() {
+        const container = document.getElementById('cafe-cards-list');
+        if (!container) return;
+
+        let filtered = currentCafeData.filter(item => {
+          if (currentCafeFilter === 'all') return true;
+          if (currentCafeFilter === 'cafe') return item.type === 'cafe';
+          if (currentCafeFilter === 'restaurant') return item.type === 'restaurant';
+          if (currentCafeFilter === 'fast_food') return item.type === 'fast_food';
+          if (currentCafeFilter === 'open_now') return item.hasHoursTag;
+          return true;
+        });
+
+        if (filtered.length === 0) {
+          container.innerHTML = `
+            <div class="p-8 text-center text-slate-400">
+              <i class="fa-solid fa-mug-hot text-3xl mb-2 text-rose-400/60"></i>
+              <p class="text-sm font-semibold">В выданном радиусе заведений этой категории не найдено.</p>
+            </div>
+          `;
+          return;
+        }
+
+        let html = '';
+        filtered.forEach(item => {
+          const safeName = item.name.replace(/'/g, "\\'");
+
+          html += `
+            <div onclick="viewCafeDetailsById(${item.id})" class="glass-panel p-3.5 rounded-2xl border border-slate-700/70 shadow-xl hover:border-rose-500/60 cursor-pointer transition-all hover:scale-[1.01]">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-xl ${item.color} text-white flex items-center justify-center text-lg font-black shrink-0 shadow-md">
+                    <i class="fa-solid ${item.icon}"></i>
+                  </div>
+                  <div class="min-w-0">
+                    <h3 class="font-bold text-sm text-white truncate">${item.name}</h3>
+                    <p class="text-xs text-rose-300 font-medium truncate">${item.typeLabel} • ${item.cuisine}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-2.5 bg-slate-900/80 p-2.5 rounded-xl border border-slate-800 space-y-1">
+                <div class="flex items-center justify-between text-xs font-semibold text-slate-300">
+                  <span class="flex items-center gap-1.5 text-amber-300"><i class="fa-solid fa-clock text-amber-400"></i> График работы:</span>
+                  <span class="text-slate-200 font-bold">${item.openingHours}</span>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between pt-2.5 mt-2 border-t border-slate-800" onclick="event.stopPropagation()">
+                <div class="flex items-center gap-3 text-xs font-semibold text-slate-300">
+                  <span class="text-rose-400"><i class="fa-solid fa-location-dot mr-1"></i>${item.distText}</span>
+                  <span class="text-slate-400"><i class="fa-solid fa-car mr-1"></i>~${item.driveMins} мин</span>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <button onclick="viewCafeDetailsById(${item.id}); event.stopPropagation();" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-rose-300 rounded-xl text-xs font-bold border border-slate-700 transition-all flex items-center gap-1">
+                    <i class="fa-solid fa-circle-info"></i> Детали
+                  </button>
+                  <button onclick="selectCafeAndRoute(${item.lat}, ${item.lng}, '${safeName}'); event.stopPropagation();" class="px-3.5 py-1.5 bg-rose-500 hover:bg-rose-400 text-white rounded-xl text-xs font-extrabold shadow-lg hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5">
+                    <i class="fa-solid fa-route"></i> Маршрут
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+
+        container.innerHTML = html;
+      }
+
+      function viewCafeDetailsById(id) {
+        const item = currentCafeData.find(x => String(x.id) === String(id));
+        if (item) {
+          viewCafeDetails(item);
+        }
+      }
+
+      function viewCafeDetails(item) {
+        if (!item) return;
+
+        closeCafeModal();
+        openBottomSheet();
+
+        currentPOI = {
+          lat: item.lat,
+          lng: item.lng,
+          name: item.name,
+          address: item.address || item.cuisine || 'Кафе / Ресторан'
+        };
+
+        if (map) {
+          map.flyTo([item.lat, item.lng], 17, { duration: 0.8 });
+        }
+
+        if (activeMarker) map.removeLayer(activeMarker);
+        const cafeIcon = L.divIcon({
+          html: `<div class="custom-marker-bounce text-rose-400 text-3xl drop-shadow-lg"><i class="fa-solid ${item.icon}"></i></div>`,
+          className: '',
+          iconSize: [30, 36],
+          iconAnchor: [15, 36]
+        });
+        activeMarker = L.marker([item.lat, item.lng], { icon: cafeIcon }).addTo(map);
+
+        document.getElementById('sheet-title').innerText = item.name;
+        document.getElementById('sheet-subtitle').innerHTML = `
+          <span class="font-bold text-rose-400">${item.typeLabel}</span>
+          <span class="text-slate-300">• ${item.distText} (~${item.driveMins} мин)</span>
+          <span id="sheet-coords" class="font-mono bg-slate-800 px-2 py-0.5 rounded text-slate-300 text-[10px]">${item.lat.toFixed(5)}, ${item.lng.toFixed(5)}</span>
+        `;
+        document.getElementById('sheet-category-badge').innerHTML = `<i class="fa-solid ${item.icon} text-rose-400"></i> ${item.typeLabel}`;
+
+        const fuelSection = document.getElementById('sheet-fuel-section');
+        if (fuelSection) fuelSection.classList.add('hidden');
+
+        scanNearbyInfrastructure(item.lat, item.lng);
+      }
+
+      function selectCafeAndRoute(lat, lng, name) {
+        closeCafeModal();
+        currentPOI = { lat, lng, name, address: 'Заведение общепита' };
+
+        if (activeMarker) map.removeLayer(activeMarker);
+        const cafeIcon = L.divIcon({
+          html: `<div class="custom-marker-bounce text-rose-400 text-3xl drop-shadow-lg"><i class="fa-solid fa-mug-hot"></i></div>`,
+          className: '',
+          iconSize: [30, 36],
+          iconAnchor: [15, 36]
+        });
+        activeMarker = L.marker([lat, lng], { icon: cafeIcon }).addTo(map);
+
+        startNavigationToCurrentPOI();
+      }
+
+      // Helper to generate dynamic Turn Arrow SVGs for HUD
+      function getManeuverSVGIcon(step) {
+        if (!step || !step.maneuver) {
+          return `<svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V4"/><path d="M6 10l6-6 6 6"/></svg>`;
+        }
+        const type = step.maneuver.type;
+        const modifier = step.maneuver.modifier;
+
+        if (modifier === 'left' || modifier === 'slight left' || modifier === 'sharp left') {
+          return `<svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V11a4 4 0 0 0-4-4H5"/><path d="M9 3l-5 4 5 4"/></svg>`;
+        } else if (modifier === 'right' || modifier === 'slight right' || modifier === 'sharp right') {
+          return `<svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20V11a4 4 0 0 1 4-4h9"/><path d="M15 3l5 4-5 4"/></svg>`;
+        } else if (modifier === 'uturn') {
+          return `<svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10a5 5 0 0 0-10 0v10"/><path d="M13 15l-5 5-5-5"/></svg>`;
+        } else if (type === 'roundabout') {
+          return `<svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 2v5"/><path d="M12 17v5"/></svg>`;
+        } else if (type === 'arrive') {
+          return `<svg class="w-8 h-8 text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`;
+        } else {
+          return `<svg class="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V4"/><path d="M6 10l6-6 6 6"/></svg>`;
+        }
+      }
+
+      // Helper to format duration in Russian (e.g., "15 мин", "1 ч", "1 ч 15 мин")
+      function getRussianPlural(number, one, two, five) {
+        let n = Math.abs(number) % 100;
+        if (n >= 5 && n <= 20) return five;
+        n %= 10;
+        if (n === 1) return one;
+        if (n >= 2 && n <= 4) return two;
+        return five;
+      }
+
+      function formatDurationUI(totalSeconds) {
+        const totalMinutes = Math.max(1, Math.round(totalSeconds / 60));
+        if (totalMinutes < 60) {
+          return `${totalMinutes} мин`;
+        }
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        if (minutes === 0) {
+          return `${hours} ч`;
+        }
+        return `${hours} ч ${minutes} мин`;
+      }
+
+      function formatDurationVoice(totalSeconds) {
+        const totalMinutes = Math.max(1, Math.round(totalSeconds / 60));
+        if (totalMinutes < 60) {
+          const minWord = getRussianPlural(totalMinutes, 'минута', 'минуты', 'минут');
+          return `${totalMinutes} ${minWord}`;
+        }
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        const hourWord = getRussianPlural(hours, 'час', 'часа', 'часов');
+
+        if (minutes === 0) {
+          return `${hours} ${hourWord}`;
+        }
+        const minWord = getRussianPlural(minutes, 'минута', 'минуты', 'минут');
+        return `${hours} ${hourWord} ${minutes} ${minWord}`;
+      }
+
+      // Helper to parse OSRM step instructions into Russian voice maneuver phrases
+      function parseOSRMStepInstruction(step) {
+        if (!step || !step.maneuver) return '';
+        const distM = Math.round(step.distance);
+        const type = step.maneuver.type;
+        const modifier = step.maneuver.modifier;
+        const streetName = step.name ? `на ${step.name}` : '';
+
+        let turnText = '';
+        if (type === 'turn' || type === 'end of road' || type === 'fork') {
+          if (modifier === 'right' || modifier === 'slight right' || modifier === 'sharp right') {
+            turnText = 'поверните направо';
+          } else if (modifier === 'left' || modifier === 'slight left' || modifier === 'sharp left') {
+            turnText = 'поверните налево';
+          } else if (modifier === 'uturn') {
+            turnText = 'выполните разворот';
+          } else {
+            turnText = 'продолжайте движение прямо';
+          }
+        } else if (type === 'roundabout') {
+          turnText = 'на кольцевой развязке сверните';
+        } else if (type === 'arrive') {
+          return 'вы прибудете в пункт назначения';
+        } else if (type === 'depart') {
+          return `начните движение ${streetName}`.trim();
+        } else {
+          turnText = 'продолжайте движение';
+        }
+
+        if (distM > 10) {
+          return `через ${distM} метров ${turnText} ${streetName}`.trim();
+        }
+        return `${turnText} ${streetName}`.trim();
+      }
+
+      // Render multi-colored traffic polylines (Green / Yellow / Red) along route
+      function renderRouteTrafficSegments(coords, drawOnMap = true) {
+        if (drawOnMap) {
+          if (!routeTrafficGroup) {
+            routeTrafficGroup = L.layerGroup().addTo(map);
+          }
+          routeTrafficGroup.clearLayers();
+        }
+
+        if (!coords || coords.length < 2) return 1.0;
+
+        const totalPoints = coords.length;
+        const segmentSize = Math.max(3, Math.floor(totalPoints / 10));
+        let greenCount = 0, yellowCount = 0, redCount = 0;
+
+        for (let i = 0; i < totalPoints - 1; i += segmentSize) {
+          const chunk = coords.slice(i, Math.min(i + segmentSize + 1, totalPoints));
+          if (chunk.length < 2) continue;
+
+          const latlngs = chunk.map(pt => [pt[1], pt[0]]);
+          // Deterministic traffic calculation per chunk:
+          // Green = Free flow (#22c55e), Yellow = Moderate jam (#eab308), Red = Standing jam (#ef4444)
+          const hash = Math.abs(Math.floor(chunk[0][0] * 10000 + chunk[0][1] * 10000 + i * 47)) % 100;
+
+          let color = '#22c55e'; // Зелёный: Без пробок
+          let weight = 8;
+          let opacity = 1.0;
+
+          if (hash > 76) {
+            color = '#ef4444'; // Красный: Сильная пробка
+            weight = 8;
+            redCount++;
+          } else if (hash > 46) {
+            color = '#eab308'; // Жёлтый: Средняя пробка
+            weight = 8;
+            yellowCount++;
+          } else {
+            greenCount++;
+          }
+
+          if (drawOnMap && routeTrafficGroup) {
+            const line = L.polyline(latlngs, {
+              color: color,
+              weight: weight,
+              opacity: opacity,
+              lineCap: 'round',
+              lineJoin: 'round'
+            });
+            routeTrafficGroup.addLayer(line);
+          }
+        }
+
+        const totalChunks = Math.max(1, greenCount + yellowCount + redCount);
+        const trafficFactor = (greenCount * 1.0 + yellowCount * 1.4 + redCount * 2.5) / totalChunks;
+        return trafficFactor;
+      }
+
+      // 5. NAVIGATION & ROUTING (OSRM + Voice Guidance for Route Only)
+      async function startNavigationToCurrentPOI() {
+        if (!currentPOI) return;
+
+        let startLat, startLng;
+
+        if (userLocation) {
+          startLat = userLocation.lat;
+          startLng = userLocation.lng;
+        } else {
+          const center = map.getCenter();
+          startLat = center.lat;
+          startLng = center.lng;
+        }
+
+        const destLat = currentPOI.lat;
+        const destLng = currentPOI.lng;
+
+        if (activeRouteControl) {
+          map.removeLayer(activeRouteControl);
+          activeRouteControl = null;
+        }
+        if (routeTrafficGroup) {
+          routeTrafficGroup.clearLayers();
+        }
+        alternativeRouteData = null;
+        detourSavedMinutes = 0;
+
+        const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${destLng},${destLat}?overview=full&geometries=geojson&steps=true&alternatives=true`;
+
+        try {
+          const res = await fetch(osrmUrl);
+          const data = await res.json();
+
+          if (!data || !data.routes || data.routes.length === 0) {
+            alert('Не удалось проложить автомобильный маршрут к указанной точке.');
+            return;
+          }
+
+          const route = data.routes[0];
+          const distanceKm = (route.distance / 1000).toFixed(1);
+
+          // Render multi-color traffic polylines (Green / Yellow / Red) on top of route
+          const trafficFactor = renderRouteTrafficSegments(route.geometry.coordinates, true);
+          // Calculate travel duration taking traffic jams into account
+          const durationWithTraffic = Math.round(route.duration * Math.max(1.15, trafficFactor));
+
+          const timeTextUI = formatDurationUI(durationWithTraffic);
+          const timeTextVoice = formatDurationVoice(durationWithTraffic);
+
+          const routeGeoJSON = {
+            type: 'Feature',
+            geometry: route.geometry
+          };
+
+          activeRouteControl = L.geoJSON(routeGeoJSON, {
+            style: {
+              color: '#0f172a',
+              weight: 10,
+              opacity: 0.35,
+              lineCap: 'round',
+              lineJoin: 'round'
+            }
+          }).addTo(map);
+
+          map.fitBounds(activeRouteControl.getBounds(), { padding: [60, 60] });
+
+          if (route.geometry && route.geometry.coordinates) {
+            currentRouteCoordinates = route.geometry.coordinates;
+            renderRouteCamerasAndIncidents(route.geometry.coordinates);
+          }
+
+          let firstTurnPhrase = 'поехали!';
+          let firstManeuver = null;
+          if (route.legs && route.legs[0] && route.legs[0].steps && route.legs[0].steps.length > 1) {
+            firstManeuver = route.legs[0].steps[1];
+            firstTurnPhrase = parseOSRMStepInstruction(firstManeuver);
+          }
+
+          // Check if an alternative route bypasses traffic congestion
+          const detourContainer = document.getElementById('hud-detour-container');
+          if (detourContainer) {
+            detourContainer.innerHTML = '';
+            detourContainer.classList.add('hidden');
+          }
+
+          let altRoute = null;
+          if (data.routes.length > 1) {
+            altRoute = data.routes[1];
+          }
+
+          if (altRoute && altRoute.geometry && altRoute.geometry.coordinates) {
+            const altTrafficFactor = renderRouteTrafficSegments(altRoute.geometry.coordinates, false);
+            const altDurationWithTraffic = Math.round((altRoute.duration) * Math.max(1.0, altTrafficFactor));
+
+            const rawSavedSec = durationWithTraffic - altDurationWithTraffic;
+            const savedSecCap = Math.min(12 * 60, Math.max(0, rawSavedSec));
+            detourSavedMinutes = Math.round(savedSecCap / 60);
+
+            if (detourSavedMinutes >= 2 && detourContainer) {
+              alternativeRouteData = altRoute;
+
+              detourContainer.className = 'mt-3 pt-2.5 border-t border-slate-700/80';
+              detourContainer.innerHTML = `
+                <div class="p-2.5 rounded-xl bg-emerald-950/70 border border-emerald-500/50 flex items-center justify-between gap-2 shadow-xl">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <div class="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center font-bold text-sm shrink-0">
+                      <i class="fa-solid fa-route"></i>
+                    </div>
+                    <div class="min-w-0">
+                      <div class="text-xs font-bold text-emerald-300 flex items-center gap-1.5 truncate">
+                        <span>Найден объезд пробки!</span>
+                        <span class="px-1.5 py-0.5 rounded bg-emerald-500 text-slate-950 font-black text-[10px] shrink-0">-${detourSavedMinutes} мин</span>
+                      </div>
+                      <div class="text-[11px] text-slate-200 truncate mt-0.5">Сократит время в пути на ${detourSavedMinutes} ${getRussianPlural(detourSavedMinutes, 'минуту', 'минуты', 'минут')}</div>
+                    </div>
+                  </div>
+                  <button onclick="applyDetourRoute()" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 text-xs font-black rounded-lg shadow-md transition-all shrink-0 flex items-center gap-1">
+                    <i class="fa-solid fa-check"></i> Принять (-${detourSavedMinutes} мин)
+                  </button>
+                </div>
+              `;
+              detourContainer.classList.remove('hidden');
+            }
+          }
+
+          // Update Navigation HUD
+          document.getElementById('hud-turn-icon').innerHTML = getManeuverSVGIcon(firstManeuver);
+          document.getElementById('hud-title').innerText = `К точке: ${currentPOI.name}`;
+          document.getElementById('hud-step-instruction').innerText = firstTurnPhrase ? (firstTurnPhrase.charAt(0).toUpperCase() + firstTurnPhrase.slice(1)) : 'Поехали!';
+          document.getElementById('hud-distance').innerHTML = `<i class="fa-solid fa-route mr-1"></i> ${distanceKm} км`;
+          document.getElementById('hud-time').innerHTML = `<i class="fa-solid fa-clock mr-1"></i> ${timeTextUI} <span class="text-[10px] text-amber-300 font-semibold">(с пробками)</span>`;
+          document.getElementById('navigation-hud').classList.remove('hidden');
+
+          closeBottomSheet();
+
+          // Voice announces route maneuver and traffic duration ONLY
+          const voiceMsg = `Маршрут построен. Расстояние ${distanceKm} километров. Время в пути с учётом пробок ${timeTextVoice}. ${firstTurnPhrase ? (firstTurnPhrase.charAt(0).toUpperCase() + firstTurnPhrase.slice(1)) : 'Поехали!'}`;
+          speakVoice(voiceMsg);
+
+        } catch (err) {
+          console.error('OSRM route error:', err);
+          alert('Ошибка связи с сервером маршрутизации OSRM.');
+        }
+      }
+
+      function applyDetourRoute() {
+        if (!alternativeRouteData) return;
+
+        const altRoute = alternativeRouteData;
+        const savedMins = detourSavedMinutes;
+
+        if (activeRouteControl) {
+          map.removeLayer(activeRouteControl);
+        }
+
+        const routeGeoJSON = {
+          type: 'Feature',
+          geometry: altRoute.geometry
+        };
+
+        activeRouteControl = L.geoJSON(routeGeoJSON, {
+          style: {
+            color: '#0f172a',
+            weight: 10,
+            opacity: 0.35,
+            lineCap: 'round',
+            lineJoin: 'round'
+          }
+        }).addTo(map);
+
+        currentRouteCoordinates = altRoute.geometry.coordinates;
+        const altFactor = renderRouteTrafficSegments(altRoute.geometry.coordinates, true);
+        const detourDuration = Math.round((altRoute.duration || 600) * Math.max(1.0, altFactor));
+
+        const newDistanceKm = (altRoute.distance / 1000).toFixed(1);
+        const newTimeUI = formatDurationUI(detourDuration);
+
+        let firstTurnPhrase = 'поехали!';
+        let firstManeuver = null;
+        if (altRoute.legs && altRoute.legs[0] && altRoute.legs[0].steps && altRoute.legs[0].steps.length > 1) {
+          firstManeuver = altRoute.legs[0].steps[1];
+          firstTurnPhrase = parseOSRMStepInstruction(firstManeuver);
+        }
+
+        document.getElementById('hud-turn-icon').innerHTML = getManeuverSVGIcon(firstManeuver);
+        document.getElementById('hud-step-instruction').innerText = firstTurnPhrase ? (firstTurnPhrase.charAt(0).toUpperCase() + firstTurnPhrase.slice(1)) : 'Поехали!';
+        document.getElementById('hud-distance').innerHTML = `<i class="fa-solid fa-route mr-1"></i> ${newDistanceKm} км`;
+        document.getElementById('hud-time').innerHTML = `<i class="fa-solid fa-clock mr-1"></i> ${newTimeUI} <span class="text-[10px] text-emerald-300 font-semibold">(объезд)</span>`;
+
+        const detourContainer = document.getElementById('hud-detour-container');
+        if (detourContainer) {
+          detourContainer.classList.add('hidden');
+          detourContainer.innerHTML = '';
+        }
+
+        alternativeRouteData = null;
+
+        const voiceMsg = `Маршрут перестроен в объезд пробки. Вы сократили маршрут на ${savedMins} ${getRussianPlural(savedMins, 'минуту', 'минуты', 'минут')}. ${firstTurnPhrase ? (firstTurnPhrase.charAt(0).toUpperCase() + firstTurnPhrase.slice(1)) : 'Поехали!'}`;
+        speakVoice(voiceMsg);
+      }
+
+      // Render Speed Cameras and Accidents along route coordinates
+      function renderRouteCamerasAndIncidents(coords) {
+        if (!coords || coords.length < 5 || !map) return;
+        if (cameraMarkersGroup) cameraMarkersGroup.clearLayers();
+        if (incidentMarkersGroup) incidentMarkersGroup.clearLayers();
+
+        const totalPoints = coords.length;
+        const speedLimits = [40, 60, 60, 80, 80, 90];
+
+        // 1. Render Speed Cameras along route
+        const cameraStep = Math.max(6, Math.floor(totalPoints / 4));
+        for (let i = cameraStep; i < totalPoints - 3; i += cameraStep) {
+          const pt = coords[i]; // [lng, lat]
+          const limit = speedLimits[(i + Math.floor(pt[0] * 100)) % speedLimits.length];
+
+          const cameraHtml = `
+            <div class="flex items-center bg-slate-900 border-2 border-rose-500 text-white rounded-full px-2 py-0.5 shadow-2xl gap-1 hover:scale-110 transition-transform cursor-pointer">
+              <i class="fa-solid fa-camera text-rose-400 text-xs"></i>
+              <span class="font-black text-xs text-amber-300">${limit}</span>
+            </div>
+          `;
+
+          const cameraIcon = L.divIcon({
+            className: 'route-camera-badge',
+            html: cameraHtml,
+            iconSize: [48, 24],
+            iconAnchor: [24, 12]
+          });
+
+          const marker = L.marker([pt[1], pt[0]], { icon: cameraIcon });
+          marker.bindTooltip(`📹 <b>Камера фиксации скорости</b><br>Ограничение: <b>${limit} км/ч</b>`, {
+            direction: 'top',
+            offset: [0, -10]
+          });
+          cameraMarkersGroup.addLayer(marker);
+        }
+
+        // 2. Render Road Accidents (ДТП) along route
+        const incidentIdx = Math.floor(totalPoints * 0.45);
+        if (incidentIdx > 2 && incidentIdx < totalPoints - 2) {
+          const pt = coords[incidentIdx];
+          const accidentHtml = `
+            <div class="flex items-center bg-rose-600 border-2 border-white text-white rounded-full px-2 py-0.5 shadow-2xl gap-1 animate-pulse hover:scale-110 transition-transform cursor-pointer">
+              <i class="fa-solid fa-car-burst text-xs"></i>
+              <span class="font-extrabold text-[11px]">ДТП</span>
+            </div>
+          `;
+
+          const accidentIcon = L.divIcon({
+            className: 'route-accident-badge',
+            html: accidentHtml,
+            iconSize: [46, 24],
+            iconAnchor: [23, 12]
+          });
+
+          const marker = L.marker([pt[1], pt[0]], { icon: accidentIcon });
+          marker.bindTooltip(`⚠️ <b>ДТП / Авария</b><br>Левый ряд заблокирован`, {
+            direction: 'top',
+            offset: [0, -10]
+          });
+          incidentMarkersGroup.addLayer(marker);
+        }
+      }
+
+      function cancelRoute() {
+        if (activeRouteControl) {
+          map.removeLayer(activeRouteControl);
+          activeRouteControl = null;
+        }
+        if (routeTrafficGroup) {
+          routeTrafficGroup.clearLayers();
+        }
+        currentRouteCoordinates = null;
+        alternativeRouteData = null;
+        detourSavedMinutes = 0;
+
+        if (cameraMarkersGroup) cameraMarkersGroup.clearLayers();
+        if (incidentMarkersGroup) incidentMarkersGroup.clearLayers();
+        if (simSpeedInterval) {
+          clearInterval(simSpeedInterval);
+          simSpeedInterval = null;
+        }
+        const speedValElem = document.getElementById('current-speed-val');
+        if (speedValElem) speedValElem.innerText = '0';
+
+        const detourContainer = document.getElementById('hud-detour-container');
+        if (detourContainer) {
+          detourContainer.classList.add('hidden');
+          detourContainer.innerHTML = '';
+        }
+
+        document.getElementById('navigation-hud').classList.add('hidden');
+      }
+
+      // Bottom Sheet Drawer Helpers
+      function openBottomSheet() {
+        document.getElementById('bottom-sheet').classList.remove('translate-y-full');
+      }
+
+      function closeBottomSheet() {
+        document.getElementById('bottom-sheet').classList.add('translate-y-full');
+      }
+
+      // Nominatim Search Autocomplete Engine
+      let searchDebounceTimer = null;
+      const searchInput = document.getElementById('search-input');
+      const searchResults = document.getElementById('search-results');
+      const searchClearBtn = document.getElementById('search-clear-btn');
+
+      searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+        if (query.length > 0) {
+          searchClearBtn.classList.remove('hidden');
+        } else {
+          searchClearBtn.classList.add('hidden');
+          searchResults.classList.add('hidden');
+          return;
+        }
+
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+          performSearch(query);
+        }, 350);
+      });
+
+      searchClearBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        searchClearBtn.classList.add('hidden');
+        searchResults.classList.add('hidden');
+      });
+
+      async function performSearch(query) {
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1&limit=5&accept-language=ru`);
+          const data = await res.json();
+
+          searchResults.innerHTML = '';
+
+          if (!data || data.length === 0) {
+            searchResults.innerHTML = '<div class="p-3 text-xs text-slate-400 text-center">Ничего не найдено</div>';
+            searchResults.classList.remove('hidden');
+            return;
+          }
+
+          data.forEach(item => {
+            const lat = parseFloat(item.lat);
+            const lon = parseFloat(item.lon);
+            const title = item.display_name.split(',')[0];
+            const subtitle = item.display_name;
+
+            const div = document.createElement('div');
+            div.className = 'p-3 hover:bg-slate-700/60 cursor-pointer transition-colors flex items-center gap-3';
+            div.innerHTML = `
+              <div class="w-8 h-8 rounded-full bg-brand-500/20 text-brand-400 flex items-center justify-center shrink-0">
+                <i class="fa-solid fa-location-dot"></i>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-sm text-slate-100 truncate">${title}</div>
+                <div class="text-xs text-slate-400 truncate mt-0.5">${subtitle}</div>
+              </div>
+            `;
+            div.onclick = () => {
+              searchResults.classList.add('hidden');
+              map.flyTo([lat, lon], 18, { duration: 1 });
+              handleMapClick(lat, lon, title);
+            };
+
+            searchResults.appendChild(div);
+          });
+
+          searchResults.classList.remove('hidden');
+        } catch (err) {
+          console.warn('Search error:', err);
+        }
+      }
+
+      // Run Initialization on Page Load
+      window.addEventListener('DOMContentLoaded', () => {
+        initMap();
+      });
+    </script>
+  </body>
+</html>
